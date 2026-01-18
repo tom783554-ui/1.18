@@ -1,20 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Scene, Vector3 } from "@babylonjs/core";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArcRotateCamera, Scene, Vector3 } from "@babylonjs/core";
 import { createEngine } from "./engine/createEngine";
 import { createScene } from "./scene/createScene";
 import { loadMainGlb } from "./load/loadMainGlb";
 import Hud from "./ui/Hud";
-import LoadingOverlay from "./ui/LoadingOverlay";
+import ErrorOverlay from "./ui/ErrorOverlay";
 
 const DEFAULT_GLB = "/assets/main/main.glb";
+
+type ViewerError = { message: string; stack?: string };
 
 export default function Viewer() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<ReturnType<typeof createEngine> | null>(null);
   const sceneRef = useRef<Scene | null>(null);
+  const cameraRef = useRef<ArcRotateCamera | null>(null);
   const cameraResetRef = useRef({
     alpha: Math.PI / 2,
     beta: Math.PI / 3,
@@ -23,27 +25,10 @@ export default function Viewer() {
   });
   const freezeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [status, setStatus] = useState("Idle");
-  const [progress, setProgress] = useState(0);
   const [isReady, setIsReady] = useState(false);
-  const [error, setError] = useState<{ message: string; stack?: string } | null>(null);
-  const [missingMain, setMissingMain] = useState(false);
-  const [currentGlb, setCurrentGlb] = useState<string | null>(null);
-  const [copyStatus, setCopyStatus] = useState("Copy Share Link");
-
-  const searchParams = useSearchParams();
-  const glbParam = useMemo(() => searchParams.get("glb"), [searchParams]);
-
-  const resolveGlbUrl = useCallback(() => {
-    if (glbParam) {
-      return glbParam;
-    }
-    const envUrl = process.env.NEXT_PUBLIC_MAIN_GLB_URL?.trim();
-    if (envUrl) {
-      return envUrl;
-    }
-    return DEFAULT_GLB;
-  }, [glbParam]);
+  const [error, setError] = useState<ViewerError | null>(null);
+  const [currentGlb, setCurrentGlb] = useState(DEFAULT_GLB);
+  const [reloadToken, setReloadToken] = useState(0);
 
   const scheduleFreeze = useCallback((scene: Scene) => {
     if (freezeTimeoutRef.current) {
@@ -77,12 +62,8 @@ export default function Viewer() {
   }, [unfreeze]);
 
   const resetCamera = useCallback(() => {
-    const scene = sceneRef.current;
-    if (!scene) {
-      return;
-    }
-    const camera = scene.activeCamera;
-    if (!camera || !("setTarget" in camera)) {
+    const camera = cameraRef.current;
+    if (!camera) {
       return;
     }
     camera.alpha = cameraResetRef.current.alpha;
@@ -91,52 +72,21 @@ export default function Viewer() {
     camera.setTarget(cameraResetRef.current.target.clone());
   }, []);
 
-  const copyShareLink = useCallback(async () => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const url = new URL(window.location.href);
-    if (glbParam) {
-      url.searchParams.set("glb", glbParam);
-    } else {
-      url.searchParams.delete("glb");
-    }
-    try {
-      await navigator.clipboard.writeText(url.toString());
-      setCopyStatus("Copied!");
-      setTimeout(() => setCopyStatus("Copy Share Link"), 1500);
-    } catch {
-      setCopyStatus("Copy failed");
-      setTimeout(() => setCopyStatus("Copy Share Link"), 2000);
-    }
-  }, [glbParam]);
-
   const loadGlb = useCallback(
     async (scene: Scene, url: string) => {
-      setStatus("Loading...");
-      setProgress(0);
       setIsReady(false);
       setError(null);
 
       try {
-        await loadMainGlb(scene, url, ({ status: nextStatus, progress: pct }) => {
-          setStatus(nextStatus);
-          setProgress(pct);
-        });
-        setStatus("Scene ready");
-        setProgress(100);
+        await loadMainGlb(scene, url);
         setIsReady(true);
         setCurrentGlb(url);
-        setMissingMain(false);
         scheduleFreeze(scene);
       } catch (error) {
         console.error("Failed to load GLB", error);
         const err = error instanceof Error ? error : new Error("Unknown error");
-        setStatus("Failed to load");
-        setProgress(0);
         setError({ message: err.message, stack: err.stack });
         setIsReady(false);
-        setMissingMain(true);
       }
     },
     [scheduleFreeze]
@@ -155,6 +105,7 @@ export default function Viewer() {
     const { camera } = createScene(scene);
     camera.attachControl(canvas, true);
     sceneRef.current = scene;
+    cameraRef.current = camera;
     cameraResetRef.current = {
       alpha: camera.alpha,
       beta: camera.beta,
@@ -170,68 +121,66 @@ export default function Viewer() {
     window.addEventListener("resize", handleResize);
     const detachInteraction = attachInteractionListeners(scene, canvas);
 
-    const glbUrl = resolveGlbUrl();
+    const glbUrl = DEFAULT_GLB;
+    setCurrentGlb(glbUrl);
     loadGlb(scene, glbUrl);
+
+    const handleError = (event: ErrorEvent) => {
+      const err = event.error instanceof Error ? event.error : new Error(event.message);
+      setError({ message: err.message, stack: err.stack });
+      setIsReady(false);
+    };
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      const err =
+        event.reason instanceof Error ? event.reason : new Error(String(event.reason));
+      setError({ message: err.message, stack: err.stack });
+      setIsReady(false);
+    };
+
+    window.addEventListener("error", handleError);
+    window.addEventListener("unhandledrejection", handleRejection);
 
     return () => {
       detachInteraction();
       window.removeEventListener("resize", handleResize);
+      window.removeEventListener("error", handleError);
+      window.removeEventListener("unhandledrejection", handleRejection);
       if (freezeTimeoutRef.current) {
         clearTimeout(freezeTimeoutRef.current);
       }
       scene.dispose();
       engine.dispose();
     };
-  }, [attachInteractionListeners, loadGlb, resolveGlbUrl]);
+  }, [attachInteractionListeners, loadGlb, reloadToken]);
 
-  const handleFilePick = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !sceneRef.current) {
-      return;
-    }
-    const objectUrl = URL.createObjectURL(file);
-    setCurrentGlb(objectUrl);
-    setMissingMain(false);
-    await loadGlb(sceneRef.current, objectUrl);
-    URL.revokeObjectURL(objectUrl);
-  };
+  const handleRetry = useCallback(() => {
+    setError(null);
+    setIsReady(false);
+    setReloadToken((prev) => prev + 1);
+  }, []);
 
   const statusLabel = error
-    ? "Error"
+    ? "ERROR"
     : isReady
-      ? `Loaded ${currentGlb ? currentGlb.split("/").pop() : "main.glb"}`
+      ? `Loaded: ${currentGlb.split("/").pop() ?? "main.glb"}`
       : "Loading...";
 
   return (
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
-      <LoadingOverlay
-        status={status}
-        progress={progress}
-        isReady={isReady}
-        error={error}
-      />
-      {missingMain && (
-        <div className="banner">
-          Missing main.glb. Add it to /public/assets/main or pick a local file.
-        </div>
-      )}
       <div className="controls">
         <button type="button" onClick={resetCamera}>
           Reset Camera
         </button>
-        <button type="button" onClick={copyShareLink}>
-          {copyStatus}
-        </button>
-        <label className="file">
-          Load Local GLB
-          <input type="file" accept=".glb" onChange={handleFilePick} />
-        </label>
       </div>
-      <Hud engine={engineRef.current} scene={sceneRef.current} status={statusLabel} />
-      <div className="status">
-        <div>Source: {currentGlb ?? "None"}</div>
-      </div>
+      <Hud
+        engine={engineRef.current}
+        scene={sceneRef.current}
+        status={statusLabel}
+        error={error}
+      />
+      {error ? <ErrorOverlay error={error} onRetry={handleRetry} /> : null}
       <style jsx>{`
         .viewer {
           position: relative;
@@ -254,8 +203,7 @@ export default function Viewer() {
           flex-wrap: wrap;
           z-index: 5;
         }
-        button,
-        .file {
+        button {
           background: rgba(30, 30, 30, 0.8);
           color: #f5f5f5;
           border: 1px solid rgba(255, 255, 255, 0.15);
@@ -264,31 +212,8 @@ export default function Viewer() {
           cursor: pointer;
           font-size: 13px;
         }
-        button:hover,
-        .file:hover {
+        button:hover {
           border-color: rgba(255, 255, 255, 0.4);
-        }
-        .file input {
-          display: none;
-        }
-        .banner {
-          position: absolute;
-          top: 16px;
-          left: 50%;
-          transform: translateX(-50%);
-          background: rgba(180, 60, 60, 0.9);
-          padding: 10px 16px;
-          border-radius: 8px;
-          z-index: 6;
-          font-size: 13px;
-        }
-        .status {
-          position: absolute;
-          bottom: 20px;
-          right: 20px;
-          font-size: 12px;
-          color: rgba(255, 255, 255, 0.6);
-          z-index: 5;
         }
       `}</style>
     </div>
