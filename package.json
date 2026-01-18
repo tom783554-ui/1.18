@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "postinstall": "node scripts/gen-main-glb.mjs && node scripts/verify-glb.mjs",
+    "prebuild": "node scripts/gen-main-glb.mjs && node scripts/verify-glb.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
