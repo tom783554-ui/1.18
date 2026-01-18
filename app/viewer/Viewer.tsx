@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import "@babylonjs/loaders/glTF";
+import "@babylonjs/loaders/glTF/2.0";
 import type { ISceneLoaderPlugin, ISceneLoaderPluginAsync, Observer } from "@babylonjs/core";
 import {
   AbstractMesh,
@@ -168,14 +168,7 @@ export default function Viewer() {
     const handleResize = () => engine.resize();
     window.addEventListener("resize", handleResize);
 
-    const ensureGltfLoader = async () => {
-      try {
-        await import("@babylonjs/loaders/glTF");
-      } catch {}
-      try {
-        await import("@babylonjs/loaders/glTF/2.0");
-      } catch {}
-
+    const ensureGltfLoader = () => {
       const has = (ext: string) => {
         try {
           return SceneLoader.IsPluginForExtensionAvailable(ext);
@@ -184,17 +177,23 @@ export default function Viewer() {
         }
       };
 
-      if (has(".glb") || has(".gltf") || has("glb") || has("gltf")) {
-        return true;
+      let available = has(".glb") || has(".gltf") || has("glb") || has("gltf");
+
+      if (!available) {
+        try {
+          SceneLoader.RegisterPlugin(new GLTFFileLoader());
+        } catch (error) {
+          console.error("RegisterPlugin(GLTFFileLoader) failed", error);
+        }
+        available = has(".glb") || has(".gltf") || has("glb") || has("gltf");
       }
 
-      try {
-        SceneLoader.RegisterPlugin(new GLTFFileLoader());
-      } catch (error) {
-        console.error("RegisterPlugin(GLTFFileLoader) failed", error);
-      }
+      setMetrics((prev) => ({
+        ...prev,
+        registeredLoaders: available ? "glTF/GLB available" : "glTF/GLB unavailable"
+      }));
 
-      return has(".glb") || has(".gltf") || has("glb") || has("gltf");
+      return available;
     };
 
     let pluginObserver: Observer<ISceneLoaderPlugin | ISceneLoaderPluginAsync> | null = null;
@@ -360,24 +359,12 @@ export default function Viewer() {
     };
 
     const startLoading = async () => {
-      const ok = await ensureGltfLoader();
-      const registeredLoaders = (
-        (
-          SceneLoader as typeof SceneLoader & {
-            GetRegisteredPlugins?: () => { name: string }[];
-          }
-        ).GetRegisteredPlugins?.() ?? []
-      ).map((plugin) => plugin.name);
-      console.log("Registered loaders:", registeredLoaders);
-      setMetrics((prev) => ({
-        ...prev,
-        registeredLoaders: registeredLoaders.length > 0 ? registeredLoaders.join(", ") : "none"
-      }));
-      if (!ok) {
-        setStatus("FATAL: glTF/GLB loader unavailable (after register attempts)");
-        console.error("glTF loader unavailable — aborting load");
-        cleanup();
-        return;
+      const ok = ensureGltfLoader();
+      if (ok) {
+        setStatus("glTF/GLB loader available");
+      } else {
+        setStatus("glTF/GLB loader unavailable (attempting load anyway)");
+        console.warn("glTF loader unavailable — attempting load anyway");
       }
 
       setStatus("Loading GLB...");
