@@ -1,7 +1,5 @@
-export const dynamic = "force-static";
-
-export function GET() {
+export async function GET() {
   return new Response("ok", {
-    headers: { "content-type": "text/plain; charset=utf-8" }
+    headers: { "content-type": "text/plain" }
   });
 }
