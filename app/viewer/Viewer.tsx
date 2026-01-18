@@ -16,8 +16,6 @@ import {
 import { AxesViewer } from "@babylonjs/core/Debug/axesViewer";
 import { GLTFFileLoader } from "@babylonjs/loaders/glTF";
 
-const GLB_URL = "/assets/main/main.glb";
-
 type OverlayMetrics = {
   fps: number;
   sceneMeshes: number;
@@ -56,18 +54,6 @@ const hasGeometryOrVertices = (mesh: AbstractMesh) => {
   const geometry = (mesh as Mesh).geometry;
   const buffers = geometry?.getVertexBuffers?.() ?? {};
   return Object.keys(buffers).length > 0;
-};
-
-const isRenderable = (mesh: AbstractMesh) => {
-  if (hasGeometryOrVertices(mesh)) {
-    return true;
-  }
-  mesh.refreshBoundingInfo?.(true);
-  const boundingInfo = mesh.getBoundingInfo?.();
-  if (!boundingInfo) {
-    return false;
-  }
-  return boundingInfo.boundingBox.extendSizeWorld.length() > 0;
 };
 
 export default function Viewer() {
@@ -184,16 +170,17 @@ export default function Viewer() {
         }
       ).GetRegisteredPlugins?.() ?? []
     ).map((plugin) => plugin.name);
-    console.log("Registered loaders", registeredLoaders);
+    console.log("Registered loaders:", registeredLoaders);
     setMetrics((prev) => ({
       ...prev,
       registeredLoaders: registeredLoaders.length > 0 ? registeredLoaders.join(", ") : "none"
     }));
-    const hasGltfLoader = registeredLoaders.some(
-      (loaderName) => loaderName.toLowerCase() === "gltf"
+    const hasGltfLoader = registeredLoaders.some((loaderName) =>
+      loaderName.toLowerCase().includes("gltf")
     );
     if (!hasGltfLoader) {
-      setStatus("glTF loader NOT registered — abort");
+      setStatus("FATAL: glTF loader NOT registered");
+      console.error("glTF loader not registered — aborting load");
       return () => {
         window.removeEventListener("resize", handleResize);
         engine.stopRenderLoop();
@@ -227,10 +214,11 @@ export default function Viewer() {
 
     const loadGlb = async () => {
       try {
+        const url = "/assets/main/main.glb";
         setStatus("Downloading GLB (for header check)...");
-        const response = await fetch(GLB_URL, { cache: "no-store" });
+        const response = await fetch(url, { cache: "no-store" });
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status} while fetching ${GLB_URL}`);
+          throw new Error(`HTTP ${response.status} while fetching ${url}`);
         }
         const arrayBuffer = await response.arrayBuffer();
         const byteLength = arrayBuffer.byteLength;
@@ -286,7 +274,7 @@ export default function Viewer() {
         setStatus("Loading GLB into AssetContainer...");
         const container = await SceneLoader.LoadAssetContainerAsync(
           "",
-          GLB_URL,
+          url,
           scene,
           undefined,
           ".glb"
@@ -311,7 +299,7 @@ export default function Viewer() {
           `Container loaded: meshes=${container.meshes.length}, mats=${container.materials.length}, tex=${container.textures.length}`
         );
 
-        const renderables = container.meshes.filter(isRenderable);
+        const renderables = container.meshes.filter((mesh) => mesh.getTotalVertices() > 0);
         if (renderables.length === 0) {
           setStatus("GLB HAS NO RENDERABLE GEOMETRY (root/nodes only)");
           console.warn("No vertices found. Export is empty or only empties/transforms.");
