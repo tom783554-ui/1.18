@@ -7,9 +7,10 @@ type HudProps = {
   engine: Engine | null;
   scene: Scene | null;
   status: string;
+  error: { message: string; stack?: string } | null;
 };
 
-export default function Hud({ engine, scene, status }: HudProps) {
+export default function Hud({ engine, scene, status, error }: HudProps) {
   const [fps, setFps] = useState(0);
   const [meshes, setMeshes] = useState(0);
   const [triangles, setTriangles] = useState(0);
@@ -34,10 +35,19 @@ export default function Hud({ engine, scene, status }: HudProps) {
 
   return (
     <div className="hud">
-      <div className="status">Status: {status}</div>
-      <div>FPS: {fps}</div>
-      <div>Meshes: {meshes}</div>
-      <div>Triangles: {triangles}</div>
+      <div className={`status ${error ? "error" : ""}`}>{status}</div>
+      {error ? (
+        <>
+          <div className="message">{error.message}</div>
+          {error.stack ? <pre className="stack">{error.stack}</pre> : null}
+        </>
+      ) : (
+        <>
+          <div>FPS: {fps}</div>
+          <div>Meshes: {meshes}</div>
+          <div>Triangles: {triangles}</div>
+        </>
+      )}
       <style jsx>{`
         .hud {
           position: absolute;
@@ -55,6 +65,24 @@ export default function Hud({ engine, scene, status }: HudProps) {
         .status {
           font-weight: 600;
           color: #facc15;
+        }
+        .status.error {
+          color: #fca5a5;
+        }
+        .message {
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.85);
+          word-break: break-word;
+        }
+        .stack {
+          margin: 6px 0 0;
+          font-size: 11px;
+          line-height: 1.4;
+          background: rgba(0, 0, 0, 0.35);
+          padding: 8px;
+          border-radius: 6px;
+          white-space: pre-wrap;
+          color: rgba(248, 250, 252, 0.75);
         }
       `}</style>
     </div>
