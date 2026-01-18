@@ -1,16 +1,11 @@
-import type { Metadata } from "next";
-import "./globals.css";
+import './globals.css';
 
-export const metadata: Metadata = {
-  title: "Main GLB Viewer",
-  description: "Babylon.js GLB viewer"
+export const metadata = {
+  title: 'M3DView',
+  description: 'Babylon GLB viewer',
 };
 
-export default function RootLayout({
-  children
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>{children}</body>
