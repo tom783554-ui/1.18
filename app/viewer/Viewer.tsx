@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import "@babylonjs/loaders/glTF";
+import type { ISceneLoaderPlugin, ISceneLoaderPluginAsync, Observer } from "@babylonjs/core";
 import {
   AbstractMesh,
   ArcRotateCamera,
@@ -10,9 +11,9 @@ import {
   Mesh,
   MeshBuilder,
   Scene,
-  SceneLoader,
   Vector3
 } from "@babylonjs/core";
+import { SceneLoader } from "@babylonjs/core/Loading/sceneLoader";
 import { AxesViewer } from "@babylonjs/core/Debug/axesViewer";
 import { GLTFFileLoader } from "@babylonjs/loaders/glTF";
 
@@ -39,6 +40,8 @@ type AssetSummary = {
   glbByteLength: number | null;
   glbMagicOk: boolean;
   glbSizeOk: boolean;
+  glbFetchStatus: number | null;
+  glbContentType: string;
 };
 
 const toHex = (bytes: Uint8Array) =>
@@ -82,7 +85,9 @@ export default function Viewer() {
     glbLength: null,
     glbByteLength: null,
     glbMagicOk: false,
-    glbSizeOk: false
+    glbSizeOk: false,
+    glbFetchStatus: null,
+    glbContentType: "n/a"
   });
 
   useEffect(() => {
@@ -163,62 +168,51 @@ export default function Viewer() {
     const handleResize = () => engine.resize();
     window.addEventListener("resize", handleResize);
 
-    const registeredLoaders = (
-      (
-        SceneLoader as typeof SceneLoader & {
-          GetRegisteredPlugins?: () => { name: string }[];
+    const ensureGltfLoader = async () => {
+      try {
+        await import("@babylonjs/loaders/glTF");
+      } catch {}
+      try {
+        await import("@babylonjs/loaders/glTF/2.0");
+      } catch {}
+
+      const has = (ext: string) => {
+        try {
+          return SceneLoader.IsPluginForExtensionAvailable(ext);
+        } catch {
+          return false;
         }
-      ).GetRegisteredPlugins?.() ?? []
-    ).map((plugin) => plugin.name);
-    console.log("Registered loaders:", registeredLoaders);
-    setMetrics((prev) => ({
-      ...prev,
-      registeredLoaders: registeredLoaders.length > 0 ? registeredLoaders.join(", ") : "none"
-    }));
-    const hasGltfLoader = registeredLoaders.some((loaderName) =>
-      loaderName.toLowerCase().includes("gltf")
-    );
-    if (!hasGltfLoader) {
-      setStatus("FATAL: glTF loader NOT registered");
-      console.error("glTF loader not registered — aborting load");
-      return () => {
-        window.removeEventListener("resize", handleResize);
-        engine.stopRenderLoop();
-        scene.dispose();
-        engine.dispose();
       };
-    }
 
-    setStatus("Loading GLB...");
-    const pluginObserver = SceneLoader.OnPluginActivatedObservable.add((plugin) => {
-      console.log("Plugin activated:", plugin.name);
-      setMetrics((prev) => ({
-        ...prev,
-        lastLoaderEvent: `Plugin activated: ${plugin.name}`
-      }));
-      if (plugin.name.toLowerCase().includes("gltf")) {
-        const gltfLoader = plugin as GLTFFileLoader;
-        gltfLoader.loggingEnabled = true;
-        gltfLoader.capturePerformanceCounters = true;
-        gltfLoader.validate = false;
-        gltfLoader.onLoaderStateChangedObservable?.add((state) => {
-          console.log("GLTF loader state", state);
-          setMetrics((prev) => ({
-            ...prev,
-            lastLoaderEvent: `GLTF state: ${state}`
-          }));
-        });
-        console.log("GLTF loader verbose logging enabled");
+      if (has(".glb") || has(".gltf") || has("glb") || has("gltf")) {
+        return true;
       }
-    });
 
+      try {
+        SceneLoader.RegisterPlugin(new GLTFFileLoader());
+      } catch (error) {
+        console.error("RegisterPlugin(GLTFFileLoader) failed", error);
+      }
+
+      return has(".glb") || has(".gltf") || has("glb") || has("gltf");
+    };
+
+    let pluginObserver: Observer<ISceneLoaderPlugin | ISceneLoaderPluginAsync> | null = null;
     const loadGlb = async () => {
       try {
         const url = "/assets/main/main.glb";
         setStatus("Downloading GLB (for header check)...");
         const response = await fetch(url, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status} while fetching ${url}`);
+        const contentType = response.headers.get("content-type") ?? "unknown";
+        const statusCode = response.status;
+        setAssetSummary((prev) => ({
+          ...prev,
+          glbFetchStatus: statusCode,
+          glbContentType: contentType
+        }));
+        if (statusCode !== 200) {
+          setStatus(`GLB fetch failed HTTP ${statusCode}`);
+          return;
         }
         const arrayBuffer = await response.arrayBuffer();
         const byteLength = arrayBuffer.byteLength;
@@ -257,7 +251,9 @@ export default function Viewer() {
           glbLength: length,
           glbByteLength: byteLength,
           glbMagicOk: magicOk,
-          glbSizeOk: sizeOk
+          glbSizeOk: sizeOk,
+          glbFetchStatus: statusCode,
+          glbContentType: contentType
         }));
 
         if (!magicOk || byteLength < 1000) {
@@ -363,15 +359,66 @@ export default function Viewer() {
       }
     };
 
-    void loadGlb();
+    const startLoading = async () => {
+      const ok = await ensureGltfLoader();
+      const registeredLoaders = (
+        (
+          SceneLoader as typeof SceneLoader & {
+            GetRegisteredPlugins?: () => { name: string }[];
+          }
+        ).GetRegisteredPlugins?.() ?? []
+      ).map((plugin) => plugin.name);
+      console.log("Registered loaders:", registeredLoaders);
+      setMetrics((prev) => ({
+        ...prev,
+        registeredLoaders: registeredLoaders.length > 0 ? registeredLoaders.join(", ") : "none"
+      }));
+      if (!ok) {
+        setStatus("FATAL: glTF/GLB loader unavailable (after register attempts)");
+        console.error("glTF loader unavailable — aborting load");
+        cleanup();
+        return;
+      }
 
-    return () => {
+      setStatus("Loading GLB...");
+      pluginObserver = SceneLoader.OnPluginActivatedObservable.add((plugin) => {
+        console.log("Plugin activated:", plugin.name);
+        setMetrics((prev) => ({
+          ...prev,
+          lastLoaderEvent: `Plugin activated: ${plugin.name}`
+        }));
+        if (plugin.name.toLowerCase().includes("gltf")) {
+          const gltfLoader = plugin as GLTFFileLoader;
+          gltfLoader.loggingEnabled = true;
+          gltfLoader.capturePerformanceCounters = true;
+          gltfLoader.validate = false;
+          gltfLoader.onLoaderStateChangedObservable?.add((state) => {
+            console.log("GLTF loader state", state);
+            setMetrics((prev) => ({
+              ...prev,
+              lastLoaderEvent: `GLTF state: ${state}`
+            }));
+          });
+          console.log("GLTF loader verbose logging enabled");
+        }
+      });
+
+      await loadGlb();
+    };
+
+    const cleanup = () => {
       window.removeEventListener("resize", handleResize);
-      SceneLoader.OnPluginActivatedObservable.remove(pluginObserver);
+      if (pluginObserver) {
+        SceneLoader.OnPluginActivatedObservable.remove(pluginObserver);
+      }
       engine.stopRenderLoop();
       scene.dispose();
       engine.dispose();
     };
+
+    void startLoading();
+
+    return cleanup;
   }, []);
 
   return (
@@ -388,10 +435,16 @@ export default function Viewer() {
         <div className="overlay-row">materials: {metrics.materials}</div>
         <div className="overlay-row">textures: {metrics.textures}</div>
         <div className="overlay-row">Registered loaders: {metrics.registeredLoaders}</div>
+        <div className="overlay-row">
+          glTF loader available: {String(SceneLoader.IsPluginForExtensionAvailable(".glb"))}
+        </div>
         <div className="overlay-row">last loader event: {metrics.lastLoaderEvent}</div>
         <div className="overlay-row">
           GLB Header: {assetSummary.glbMagicHex} v{assetSummary.glbVersion ?? "?"} ( 
           {assetSummary.glbByteLength ?? "?"} bytes)
+        </div>
+        <div className="overlay-row">
+          GLB Fetch: HTTP {assetSummary.glbFetchStatus ?? "?"} ({assetSummary.glbContentType})
         </div>
         <div className="overlay-row">
           GLB Valid: magic {assetSummary.glbMagicOk ? "OK" : "BAD"}, size{" "}
