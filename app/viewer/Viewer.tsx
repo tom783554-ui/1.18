@@ -11,6 +11,8 @@ import {
   SceneLoader,
   Vector3
 } from "@babylonjs/core";
+import { AxesViewer } from "@babylonjs/core/Debug/axesViewer";
+import { GLTFFileLoader } from "@babylonjs/loaders/glTF";
 import "@babylonjs/loaders";
 
 const GLB_URL = "/assets/main/main.glb";
@@ -20,12 +22,37 @@ type Metrics = {
   meshes: number;
 };
 
+type AssetSummary = {
+  nodes: number;
+  meshes: number;
+  materials: number;
+  textures: number;
+  glbMagicHex: string;
+  glbVersion: number | null;
+  glbLength: number | null;
+  glbByteLength: number | null;
+  glbMagicOk: boolean;
+  glbSizeOk: boolean;
+};
+
 export default function Viewer() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const sceneRef = useRef<Scene | null>(null);
   const [status, setStatus] = useState("Booting...");
   const [metrics, setMetrics] = useState<Metrics>({ fps: 0, meshes: 0 });
+  const [assetSummary, setAssetSummary] = useState<AssetSummary>({
+    nodes: 0,
+    meshes: 0,
+    materials: 0,
+    textures: 0,
+    glbMagicHex: "n/a",
+    glbVersion: null,
+    glbLength: null,
+    glbByteLength: null,
+    glbMagicOk: false,
+    glbSizeOk: false
+  });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -79,8 +106,13 @@ export default function Viewer() {
     setStatus("Loading GLB...");
     const pluginObserver = SceneLoader.OnPluginActivatedObservable.add((plugin) => {
       console.log("SceneLoader plugin activated", plugin.name);
-      const loader = plugin as {
-        name: string;
+      if (plugin.name.toLowerCase().includes("gltf")) {
+        const gltfLoader = plugin as GLTFFileLoader;
+        gltfLoader.loggingEnabled = true;
+        gltfLoader.capturePerformanceCounters = true;
+        console.log("GLTF loader verbose logging enabled");
+      }
+      const loader = plugin as GLTFFileLoader & {
         onExtensionLoadedObservable?: { add: (cb: (extension: { name?: string } | string) => void) => void };
         onExtensionNotSupportedObservable?: { add: (cb: (extensionName: string) => void) => void };
       };
@@ -99,72 +131,143 @@ export default function Viewer() {
         }
       });
     });
-    SceneLoader.ImportMeshAsync(null, "", GLB_URL, scene)
-      .then((result) => {
-        const loadedMeshes = result.meshes;
-        const geometryMeshes = loadedMeshes.filter((mesh): mesh is Mesh => mesh instanceof Mesh && Boolean(mesh.geometry));
-        console.log("GLB loaded total meshes", loadedMeshes.length);
-        loadedMeshes.forEach((mesh) => {
-          const boundingInfo = mesh.getBoundingInfo?.();
-          const hasGeometry = mesh instanceof Mesh ? Boolean(mesh.geometry) : false;
-          console.log("GLB mesh", {
-            name: mesh.name,
-            isVisible: mesh.isVisible,
-            isEnabled: mesh.isEnabled(),
-            hasGeometry,
-            boundingMin: boundingInfo ? boundingInfo.boundingBox.minimumWorld.toString() : "n/a",
-            boundingMax: boundingInfo ? boundingInfo.boundingBox.maximumWorld.toString() : "n/a",
-            scaling: mesh.scaling.toString(),
-            position: mesh.position.toString()
-          });
-        });
-        setStatus(`GLB loaded — total meshes: ${loadedMeshes.length}, geometry meshes: ${geometryMeshes.length}`);
-
-        if (geometryMeshes.length === 0) {
-          setStatus("GLB contains NO geometry — root node only");
-          console.warn(
-            "GLB has no renderable meshes. Likely empty export, LOD-only, or unsupported extension."
-          );
-          return;
+    const loadGlb = async () => {
+      try {
+        setStatus("Downloading GLB (for header check)...");
+        const response = await fetch(GLB_URL);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} while fetching ${GLB_URL}`);
         }
+        const arrayBuffer = await response.arrayBuffer();
+        const dataView = new DataView(arrayBuffer);
+        const magic = dataView.getUint32(0, true);
+        const version = dataView.getUint32(4, true);
+        const length = dataView.getUint32(8, true);
+        const magicHex = `0x${magic.toString(16)}`;
+        const magicOk = magic === 0x46546c67;
+        const sizeOk = length === arrayBuffer.byteLength;
+        console.log("GLB header validation", {
+          magicHex,
+          magicOk,
+          version,
+          declaredLength: length,
+          byteLength: arrayBuffer.byteLength,
+          sizeOk
+        });
+        setAssetSummary((prev) => ({
+          ...prev,
+          glbMagicHex: magicHex,
+          glbVersion: version,
+          glbLength: length,
+          glbByteLength: arrayBuffer.byteLength,
+          glbMagicOk: magicOk,
+          glbSizeOk: sizeOk
+        }));
+        setStatus(
+          `GLB header check: magic ${magicOk ? "OK" : "BAD"},` +
+            ` size ${sizeOk ? "OK" : "MISMATCH"} (bytes ${arrayBuffer.byteLength})`
+        );
 
-        geometryMeshes.forEach((mesh) => {
-          mesh.setEnabled(true);
-          mesh.isVisible = true;
-          mesh.scaling.setAll(1);
-          mesh.position.set(0, 0, 0);
-          if (mesh.material) {
-            const cloned = mesh.material.clone(`${mesh.material.name || mesh.name}-wireframe`);
-            if (cloned) {
-              cloned.wireframe = true;
-              mesh.material = cloned;
-            }
+        const blobUrl = URL.createObjectURL(
+          new Blob([arrayBuffer], { type: "model/gltf-binary" })
+        );
+        try {
+          setStatus("Loading GLB into AssetContainer...");
+          const container = await SceneLoader.LoadAssetContainerAsync("", blobUrl, scene);
+          console.log("GLB AssetContainer loaded", {
+            meshes: container.meshes.length,
+            transformNodes: container.transformNodes.length,
+            materials: container.materials.length,
+            textures: container.textures.length,
+            animationGroups: container.animationGroups.length
+          });
+          container.addAllToScene();
+          const nodeCount = container.transformNodes.length + container.meshes.length;
+          setAssetSummary((prev) => ({
+            ...prev,
+            nodes: nodeCount,
+            meshes: container.meshes.length,
+            materials: container.materials.length,
+            textures: container.textures.length
+          }));
+
+          const geometryMeshes = container.meshes.filter(
+            (mesh): mesh is Mesh => mesh instanceof Mesh && Boolean(mesh.geometry)
+          );
+          console.log("GLB geometry meshes", geometryMeshes.length);
+          container.meshes.forEach((mesh) => {
+            const boundingInfo = mesh.getBoundingInfo?.();
+            const hasGeometry = mesh instanceof Mesh ? Boolean(mesh.geometry) : false;
+            console.log("GLB mesh", {
+              name: mesh.name,
+              isVisible: mesh.isVisible,
+              isEnabled: mesh.isEnabled(),
+              hasGeometry,
+              boundingMin: boundingInfo ? boundingInfo.boundingBox.minimumWorld.toString() : "n/a",
+              boundingMax: boundingInfo ? boundingInfo.boundingBox.maximumWorld.toString() : "n/a",
+              scaling: mesh.scaling.toString(),
+              position: mesh.position.toString()
+            });
+          });
+
+          if (geometryMeshes.length === 0) {
+            setStatus("GLB contains NO geometry — root node only");
+            console.warn(
+              "GLB has no renderable meshes. Likely empty export, LOD-only, or unsupported extension."
+            );
+            return;
           }
-        });
 
-        let min = new Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
-        let max = new Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
-        geometryMeshes.forEach((mesh) => {
-          const bounds = mesh.getHierarchyBoundingVectors(true);
-          min = Vector3.Minimize(min, bounds.min);
-          max = Vector3.Maximize(max, bounds.max);
-        });
-        const center = min.add(max).scale(0.5);
-        const size = max.subtract(min);
-        const radius = Math.max(size.x, size.y, size.z) * 1.5;
-        camera.setTarget(center);
-        camera.radius = radius;
-        camera.lowerRadiusLimit = camera.radius * 0.1;
-        camera.upperRadiusLimit = camera.radius * 10;
+          geometryMeshes.forEach((mesh) => {
+            mesh.setEnabled(true);
+            mesh.isVisible = true;
+            mesh.scaling.setAll(1);
+            mesh.position.set(0, 0, 0);
+            mesh.showBoundingBox = true;
+            if (mesh.material) {
+              const cloned = mesh.material.clone(`${mesh.material.name || mesh.name}-wireframe`);
+              if (cloned) {
+                cloned.wireframe = true;
+                mesh.material = cloned;
+              }
+            }
+          });
 
-        cube.position = new Vector3(2, 1, 0);
+          let min = new Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+          let max = new Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+          geometryMeshes.forEach((mesh) => {
+            const bounds = mesh.getHierarchyBoundingVectors(true);
+            min = Vector3.Minimize(min, bounds.min);
+            max = Vector3.Maximize(max, bounds.max);
+          });
+          const center = min.add(max).scale(0.5);
+          const size = max.subtract(min);
+          const radius = Math.max(size.x, size.y, size.z) * 1.5;
+          camera.setTarget(center);
+          camera.radius = radius;
+          camera.lowerRadiusLimit = camera.radius * 0.1;
+          camera.upperRadiusLimit = camera.radius * 10;
 
-        setStatus(`GLB geometry visible (forced) — ${geometryMeshes.length} meshes`);
-      })
-      .catch((error) => {
+          const axesViewer = new AxesViewer(scene, Math.max(radius * 0.2, 0.5));
+          axesViewer.update(center, Vector3.Right(), Vector3.Up(), Vector3.Forward());
+          console.log("Debug helpers enabled: bounding boxes + axes", {
+            axesCenter: center.toString(),
+            axesSize: Math.max(radius * 0.2, 0.5)
+          });
+
+          cube.position = new Vector3(2, 1, 0);
+
+          setStatus(`GLB geometry visible (forced) — ${geometryMeshes.length} meshes`);
+        } finally {
+          URL.revokeObjectURL(blobUrl);
+        }
+      } catch (error) {
         console.error("GLB load failed", error);
         setStatus("GLB load failed ❌ (see console)");
-      });
+      }
+    };
+
+    void loadGlb();
 
     return () => {
       window.removeEventListener("resize", handleResize);
@@ -183,6 +286,20 @@ export default function Viewer() {
         <div className="overlay-row">Status: {status}</div>
         <div className="overlay-row">FPS: {metrics.fps}</div>
         <div className="overlay-row">Meshes: {metrics.meshes}</div>
+        <div className="overlay-row">
+          GLB Header: {assetSummary.glbMagicHex} v{assetSummary.glbVersion ?? "?"}{" "}
+          ({assetSummary.glbByteLength ?? "?"} bytes)
+        </div>
+        <div className="overlay-row">
+          GLB Valid: magic {assetSummary.glbMagicOk ? "OK" : "BAD"}, size{" "}
+          {assetSummary.glbSizeOk ? "OK" : "MISMATCH"}
+        </div>
+        <div className="overlay-row">
+          GLB Nodes/Meshes: {assetSummary.nodes}/{assetSummary.meshes}
+        </div>
+        <div className="overlay-row">
+          GLB Materials/Textures: {assetSummary.materials}/{assetSummary.textures}
+        </div>
       </div>
       <style jsx>{`
         .viewer {
