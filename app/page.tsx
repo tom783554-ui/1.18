@@ -1,12 +1,8 @@
-'use client';
-
-import dynamic from 'next/dynamic';
-
-const Viewer = dynamic(() => import('./viewer/Viewer'), { ssr: false });
+import Viewer from "./viewer/Viewer";
 
 export default function Page() {
   return (
-    <main style={{ width: '100vw', height: '100vh' }}>
+    <main style={{ width: "100vw", height: "100vh" }}>
       <Viewer />
     </main>
   );
