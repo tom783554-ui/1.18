@@ -6,9 +6,10 @@ import type { Engine, Scene } from "@babylonjs/core";
 type HudProps = {
   engine: Engine | null;
   scene: Scene | null;
+  status: string;
 };
 
-export default function Hud({ engine, scene }: HudProps) {
+export default function Hud({ engine, scene, status }: HudProps) {
   const [fps, setFps] = useState(0);
   const [meshes, setMeshes] = useState(0);
   const [triangles, setTriangles] = useState(0);
@@ -33,6 +34,7 @@ export default function Hud({ engine, scene }: HudProps) {
 
   return (
     <div className="hud">
+      <div className="status">Status: {status}</div>
       <div>FPS: {fps}</div>
       <div>Meshes: {meshes}</div>
       <div>Triangles: {triangles}</div>
@@ -49,6 +51,10 @@ export default function Hud({ engine, scene }: HudProps) {
           display: grid;
           gap: 4px;
           z-index: 5;
+        }
+        .status {
+          font-weight: 600;
+          color: #facc15;
         }
       `}</style>
     </div>

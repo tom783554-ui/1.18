@@ -26,7 +26,7 @@ export default function Viewer() {
   const [status, setStatus] = useState("Idle");
   const [progress, setProgress] = useState(0);
   const [isReady, setIsReady] = useState(false);
-  const [hasError, setHasError] = useState(false);
+  const [error, setError] = useState<{ message: string; stack?: string } | null>(null);
   const [missingMain, setMissingMain] = useState(false);
   const [currentGlb, setCurrentGlb] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState("Copy Share Link");
@@ -113,10 +113,10 @@ export default function Viewer() {
 
   const loadGlb = useCallback(
     async (scene: Scene, url: string) => {
-      setStatus("Loading");
+      setStatus("Loading...");
       setProgress(0);
       setIsReady(false);
-      setHasError(false);
+      setError(null);
 
       try {
         await loadMainGlb(scene, url, ({ status: nextStatus, progress: pct }) => {
@@ -131,9 +131,10 @@ export default function Viewer() {
         scheduleFreeze(scene);
       } catch (error) {
         console.error("Failed to load GLB", error);
+        const err = error instanceof Error ? error : new Error("Unknown error");
         setStatus("Failed to load");
         setProgress(0);
-        setHasError(true);
+        setError({ message: err.message, stack: err.stack });
         setIsReady(false);
         setMissingMain(true);
       }
@@ -195,6 +196,12 @@ export default function Viewer() {
     URL.revokeObjectURL(objectUrl);
   };
 
+  const statusLabel = error
+    ? "Error"
+    : isReady
+      ? `Loaded ${currentGlb ? currentGlb.split("/").pop() : "main.glb"}`
+      : "Loading...";
+
   return (
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
@@ -202,7 +209,7 @@ export default function Viewer() {
         status={status}
         progress={progress}
         isReady={isReady}
-        hasError={hasError}
+        error={error}
       />
       {missingMain && (
         <div className="banner">
@@ -221,7 +228,7 @@ export default function Viewer() {
           <input type="file" accept=".glb" onChange={handleFilePick} />
         </label>
       </div>
-      <Hud engine={engineRef.current} scene={sceneRef.current} />
+      <Hud engine={engineRef.current} scene={sceneRef.current} status={statusLabel} />
       <div className="status">
         <div>Source: {currentGlb ?? "None"}</div>
       </div>
