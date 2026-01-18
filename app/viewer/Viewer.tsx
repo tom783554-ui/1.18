@@ -1,219 +1,160 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArcRotateCamera, Scene, Vector3 } from "@babylonjs/core";
-import { createEngine } from "./engine/createEngine";
-import { createScene } from "./scene/createScene";
-import { loadMainGlb } from "./load/loadMainGlb";
-import Hud from "./ui/Hud";
-import ErrorOverlay from "./ui/ErrorOverlay";
+import { useEffect, useRef, useState } from "react";
+import {
+  ArcRotateCamera,
+  Engine,
+  HemisphericLight,
+  MeshBuilder,
+  Scene,
+  SceneLoader,
+  Vector3
+} from "@babylonjs/core";
+import "@babylonjs/loaders";
 
-const DEFAULT_GLB = "/assets/main/main.glb";
+const GLB_URL = "/assets/main/main.glb";
 
-type ViewerError = { message: string; stack?: string };
+type Metrics = {
+  fps: number;
+  meshes: number;
+};
 
 export default function Viewer() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const engineRef = useRef<ReturnType<typeof createEngine> | null>(null);
+  const engineRef = useRef<Engine | null>(null);
   const sceneRef = useRef<Scene | null>(null);
-  const cameraRef = useRef<ArcRotateCamera | null>(null);
-  const cameraResetRef = useRef({
-    alpha: Math.PI / 2,
-    beta: Math.PI / 3,
-    radius: 12,
-    target: new Vector3(0, 1.2, 0)
-  });
-  const freezeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [isReady, setIsReady] = useState(false);
-  const [error, setError] = useState<ViewerError | null>(null);
-  const [currentGlb, setCurrentGlb] = useState(DEFAULT_GLB);
-  const [reloadToken, setReloadToken] = useState(0);
-
-  const scheduleFreeze = useCallback((scene: Scene) => {
-    if (freezeTimeoutRef.current) {
-      clearTimeout(freezeTimeoutRef.current);
-    }
-    freezeTimeoutRef.current = setTimeout(() => {
-      if (scene.isReady()) {
-        scene.freezeActiveMeshes();
-      }
-    }, 2000);
-  }, []);
-
-  const unfreeze = useCallback((scene: Scene) => {
-    scene.unfreezeActiveMeshes();
-    scheduleFreeze(scene);
-  }, [scheduleFreeze]);
-
-  const attachInteractionListeners = useCallback((scene: Scene, canvas: HTMLCanvasElement) => {
-    const handleInteraction = () => unfreeze(scene);
-    canvas.addEventListener("pointerdown", handleInteraction);
-    canvas.addEventListener("pointermove", handleInteraction);
-    canvas.addEventListener("wheel", handleInteraction, { passive: true });
-    window.addEventListener("keydown", handleInteraction);
-
-    return () => {
-      canvas.removeEventListener("pointerdown", handleInteraction);
-      canvas.removeEventListener("pointermove", handleInteraction);
-      canvas.removeEventListener("wheel", handleInteraction);
-      window.removeEventListener("keydown", handleInteraction);
-    };
-  }, [unfreeze]);
-
-  const resetCamera = useCallback(() => {
-    const camera = cameraRef.current;
-    if (!camera) {
-      return;
-    }
-    camera.alpha = cameraResetRef.current.alpha;
-    camera.beta = cameraResetRef.current.beta;
-    camera.radius = cameraResetRef.current.radius;
-    camera.setTarget(cameraResetRef.current.target.clone());
-  }, []);
-
-  const loadGlb = useCallback(
-    async (scene: Scene, url: string) => {
-      setIsReady(false);
-      setError(null);
-
-      try {
-        await loadMainGlb(scene, url);
-        setIsReady(true);
-        setCurrentGlb(url);
-        scheduleFreeze(scene);
-      } catch (error) {
-        console.error("Failed to load GLB", error);
-        const err = error instanceof Error ? error : new Error("Unknown error");
-        setError({ message: err.message, stack: err.stack });
-        setIsReady(false);
-      }
-    },
-    [scheduleFreeze]
-  );
+  const [status, setStatus] = useState("Booting...");
+  const [metrics, setMetrics] = useState<Metrics>({ fps: 0, meshes: 0 });
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
-      return;
+      return undefined;
     }
 
-    const engine = createEngine(canvas);
+    setStatus("Booting...");
+
+    const engine = new Engine(canvas, true, {
+      preserveDrawingBuffer: true,
+      stencil: true,
+      antialias: true
+    });
     engineRef.current = engine;
+    setStatus("Engine initialized");
 
     const scene = new Scene(engine);
-    const { camera } = createScene(scene);
-    camera.attachControl(canvas, true);
     sceneRef.current = scene;
-    cameraRef.current = camera;
-    cameraResetRef.current = {
-      alpha: camera.alpha,
-      beta: camera.beta,
-      radius: camera.radius,
-      target: camera.target.clone()
-    };
+    setStatus("Scene created");
+
+    const camera = new ArcRotateCamera(
+      "camera",
+      Math.PI / 2,
+      Math.PI / 3,
+      8,
+      new Vector3(0, 1, 0),
+      scene
+    );
+    camera.attachControl(canvas, true);
+
+    new HemisphericLight("hemi-light", new Vector3(0, 1, 0), scene);
+
+    const cube = MeshBuilder.CreateBox("debug-cube", { size: 1 }, scene);
+    cube.position = new Vector3(0, 1, 0);
+    setStatus("Render loop running (cube visible)");
 
     engine.runRenderLoop(() => {
       scene.render();
+      setMetrics({
+        fps: Math.round(engine.getFps()),
+        meshes: scene.meshes.length
+      });
     });
 
     const handleResize = () => engine.resize();
     window.addEventListener("resize", handleResize);
-    const detachInteraction = attachInteractionListeners(scene, canvas);
 
-    const glbUrl = DEFAULT_GLB;
-    setCurrentGlb(glbUrl);
-    loadGlb(scene, glbUrl);
+    setStatus("Loading GLB...");
+    SceneLoader.ImportMeshAsync(null, "", GLB_URL, scene)
+      .then((result) => {
+        const loadedMeshes = result.meshes.filter((mesh) => mesh.name !== "__root__");
+        console.log(
+          "GLB loaded",
+          loadedMeshes.length,
+          loadedMeshes.map((mesh) => mesh.name)
+        );
+        setStatus(`GLB loaded ✅ meshes=${loadedMeshes.length}`);
 
-    const handleError = (event: ErrorEvent) => {
-      const err = event.error instanceof Error ? event.error : new Error(event.message);
-      setError({ message: err.message, stack: err.stack });
-      setIsReady(false);
-    };
+        if (loadedMeshes.length > 0) {
+          let min = new Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+          let max = new Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
 
-    const handleRejection = (event: PromiseRejectionEvent) => {
-      const err =
-        event.reason instanceof Error ? event.reason : new Error(String(event.reason));
-      setError({ message: err.message, stack: err.stack });
-      setIsReady(false);
-    };
+          loadedMeshes.forEach((mesh) => {
+            const bounds = mesh.getHierarchyBoundingVectors(true);
+            min = Vector3.Minimize(min, bounds.min);
+            max = Vector3.Maximize(max, bounds.max);
+          });
 
-    window.addEventListener("error", handleError);
-    window.addEventListener("unhandledrejection", handleRejection);
+          const center = min.add(max).scale(0.5);
+          const radius = Math.max(Vector3.Distance(min, max) * 0.75, 3);
+          camera.setTarget(center);
+          camera.radius = radius;
+        }
+      })
+      .catch((error) => {
+        console.error("GLB load failed", error);
+        setStatus("GLB load failed ❌ (see console)");
+      });
 
     return () => {
-      detachInteraction();
       window.removeEventListener("resize", handleResize);
-      window.removeEventListener("error", handleError);
-      window.removeEventListener("unhandledrejection", handleRejection);
-      if (freezeTimeoutRef.current) {
-        clearTimeout(freezeTimeoutRef.current);
-      }
+      engine.stopRenderLoop();
       scene.dispose();
       engine.dispose();
     };
-  }, [attachInteractionListeners, loadGlb, reloadToken]);
-
-  const handleRetry = useCallback(() => {
-    setError(null);
-    setIsReady(false);
-    setReloadToken((prev) => prev + 1);
   }, []);
-
-  const statusLabel = error
-    ? "ERROR"
-    : isReady
-      ? `Loaded: ${currentGlb.split("/").pop() ?? "main.glb"}`
-      : "Loading...";
 
   return (
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
-      <div className="controls">
-        <button type="button" onClick={resetCamera}>
-          Reset Camera
-        </button>
+      <div className="overlay">
+        <div className="overlay-title">Babylon Viewer</div>
+        <div className="overlay-row">Status: {status}</div>
+        <div className="overlay-row">FPS: {metrics.fps}</div>
+        <div className="overlay-row">Meshes: {metrics.meshes}</div>
       </div>
-      <Hud
-        engine={engineRef.current}
-        scene={sceneRef.current}
-        status={statusLabel}
-        error={error}
-      />
-      {error ? <ErrorOverlay error={error} onRetry={handleRetry} /> : null}
       <style jsx>{`
         .viewer {
           position: relative;
           width: 100vw;
           height: 100vh;
           overflow: hidden;
-          background: #2b2b2b;
+          background: #111;
         }
         .canvas {
-          width: 100%;
-          height: 100%;
+          width: 100vw;
+          height: 100vh;
           display: block;
+          touch-action: none;
         }
-        .controls {
+        .overlay {
           position: absolute;
-          bottom: 20px;
-          left: 20px;
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          z-index: 5;
-        }
-        button {
-          background: rgba(30, 30, 30, 0.8);
-          color: #f5f5f5;
-          border: 1px solid rgba(255, 255, 255, 0.15);
+          top: 16px;
+          left: 16px;
+          background: rgba(0, 0, 0, 0.6);
+          color: #fff;
+          padding: 12px 14px;
           border-radius: 8px;
-          padding: 8px 12px;
-          cursor: pointer;
-          font-size: 13px;
+          font-size: 12px;
+          font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          z-index: 10;
+          max-width: 280px;
         }
-        button:hover {
-          border-color: rgba(255, 255, 255, 0.4);
+        .overlay-title {
+          font-weight: 600;
+          margin-bottom: 6px;
+        }
+        .overlay-row {
+          line-height: 1.4;
         }
       `}</style>
     </div>
