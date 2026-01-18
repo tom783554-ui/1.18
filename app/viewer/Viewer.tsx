@@ -5,6 +5,7 @@ import {
   ArcRotateCamera,
   Engine,
   HemisphericLight,
+  Mesh,
   MeshBuilder,
   Scene,
   SceneLoader,
@@ -41,6 +42,8 @@ export default function Viewer() {
     });
     engineRef.current = engine;
     setStatus("Engine initialized");
+    console.log("Engine caps", engine.getCaps());
+    console.log("Loaders: @babylonjs/loaders import active");
 
     const scene = new Scene(engine);
     sceneRef.current = scene;
@@ -74,31 +77,89 @@ export default function Viewer() {
     window.addEventListener("resize", handleResize);
 
     setStatus("Loading GLB...");
+    const pluginObserver = SceneLoader.OnPluginActivatedObservable.add((plugin) => {
+      console.log("SceneLoader plugin activated", plugin.name);
+      const loader = plugin as {
+        name: string;
+        onExtensionLoadedObservable?: { add: (cb: (extension: { name?: string } | string) => void) => void };
+        onExtensionNotSupportedObservable?: { add: (cb: (extensionName: string) => void) => void };
+      };
+      loader.onExtensionLoadedObservable?.add((extension) => {
+        const extensionName = typeof extension === "string" ? extension : extension.name ?? "unknown";
+        console.log("GLTF extension loaded", extensionName);
+      });
+      loader.onExtensionNotSupportedObservable?.add((extensionName) => {
+        console.warn("GLTF extension not supported", extensionName);
+        if (
+          extensionName.toLowerCase().includes("draco") ||
+          extensionName.toLowerCase().includes("ktx2") ||
+          extensionName.toLowerCase().includes("basisu")
+        ) {
+          console.warn("Draco/KTX2 extension detected but unsupported", extensionName);
+        }
+      });
+    });
     SceneLoader.ImportMeshAsync(null, "", GLB_URL, scene)
       .then((result) => {
-        const loadedMeshes = result.meshes.filter((mesh) => mesh.name !== "__root__");
-        console.log(
-          "GLB loaded",
-          loadedMeshes.length,
-          loadedMeshes.map((mesh) => mesh.name)
-        );
-        setStatus(`GLB loaded ✅ meshes=${loadedMeshes.length}`);
-
-        if (loadedMeshes.length > 0) {
-          let min = new Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
-          let max = new Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
-
-          loadedMeshes.forEach((mesh) => {
-            const bounds = mesh.getHierarchyBoundingVectors(true);
-            min = Vector3.Minimize(min, bounds.min);
-            max = Vector3.Maximize(max, bounds.max);
+        const loadedMeshes = result.meshes;
+        const geometryMeshes = loadedMeshes.filter((mesh): mesh is Mesh => mesh instanceof Mesh && Boolean(mesh.geometry));
+        console.log("GLB loaded total meshes", loadedMeshes.length);
+        loadedMeshes.forEach((mesh) => {
+          const boundingInfo = mesh.getBoundingInfo?.();
+          const hasGeometry = mesh instanceof Mesh ? Boolean(mesh.geometry) : false;
+          console.log("GLB mesh", {
+            name: mesh.name,
+            isVisible: mesh.isVisible,
+            isEnabled: mesh.isEnabled(),
+            hasGeometry,
+            boundingMin: boundingInfo ? boundingInfo.boundingBox.minimumWorld.toString() : "n/a",
+            boundingMax: boundingInfo ? boundingInfo.boundingBox.maximumWorld.toString() : "n/a",
+            scaling: mesh.scaling.toString(),
+            position: mesh.position.toString()
           });
+        });
+        setStatus(`GLB loaded — total meshes: ${loadedMeshes.length}, geometry meshes: ${geometryMeshes.length}`);
 
-          const center = min.add(max).scale(0.5);
-          const radius = Math.max(Vector3.Distance(min, max) * 0.75, 3);
-          camera.setTarget(center);
-          camera.radius = radius;
+        if (geometryMeshes.length === 0) {
+          setStatus("GLB contains NO geometry — root node only");
+          console.warn(
+            "GLB has no renderable meshes. Likely empty export, LOD-only, or unsupported extension."
+          );
+          return;
         }
+
+        geometryMeshes.forEach((mesh) => {
+          mesh.setEnabled(true);
+          mesh.isVisible = true;
+          mesh.scaling.setAll(1);
+          mesh.position.set(0, 0, 0);
+          if (mesh.material) {
+            const cloned = mesh.material.clone(`${mesh.material.name || mesh.name}-wireframe`);
+            if (cloned) {
+              cloned.wireframe = true;
+              mesh.material = cloned;
+            }
+          }
+        });
+
+        let min = new Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+        let max = new Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+        geometryMeshes.forEach((mesh) => {
+          const bounds = mesh.getHierarchyBoundingVectors(true);
+          min = Vector3.Minimize(min, bounds.min);
+          max = Vector3.Maximize(max, bounds.max);
+        });
+        const center = min.add(max).scale(0.5);
+        const size = max.subtract(min);
+        const radius = Math.max(size.x, size.y, size.z) * 1.5;
+        camera.setTarget(center);
+        camera.radius = radius;
+        camera.lowerRadiusLimit = camera.radius * 0.1;
+        camera.upperRadiusLimit = camera.radius * 10;
+
+        cube.position = new Vector3(2, 1, 0);
+
+        setStatus(`GLB geometry visible (forced) — ${geometryMeshes.length} meshes`);
       })
       .catch((error) => {
         console.error("GLB load failed", error);
@@ -107,6 +168,7 @@ export default function Viewer() {
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      SceneLoader.OnPluginActivatedObservable.remove(pluginObserver);
       engine.stopRenderLoop();
       scene.dispose();
       engine.dispose();
