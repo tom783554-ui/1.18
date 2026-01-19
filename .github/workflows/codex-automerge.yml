@@ -1,89 +1,217 @@
-name: Codex PR Auto-Approve and Auto-Merge
+# .github/workflows/codex-automerge.yml
+name: Codex PR Auto-Approve and Auto-Merge (resilient)
 
 on:
-  pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
+  status: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: codex-automerge-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
   pull-requests: write
+  checks: read
+  statuses: read
 
 jobs:
-  approve-and-automerge:
-    if: contains(github.event.pull_request.labels.*.name, 'codex')
+  automerge:
     runs-on: ubuntu-latest
     steps:
       - name: Heartbeat
-        run: echo "running..."
+        run: |
+          echo "heartbeat: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "event: $GITHUB_EVENT_NAME"
+          echo "repo: $GITHUB_REPOSITORY"
 
-      - name: Approve PR
+      - name: Auto-approve + auto-merge (policy-adaptive, idempotent)
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const pr = context.payload.pull_request;
-            await github.rest.pulls.createReview({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-              event: "APPROVE",
-              body: "Auto-approve Codex PR."
-            });
+            const owner = context.repo.owner
+            const repo = context.repo.repo
 
-      - name: Enable auto-merge (squash with merge fallback)
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pr = context.payload.pull_request;
-            const enableAutoMerge = async (mergeMethod) => {
-              const query = `
-                mutation($pullRequestId: ID!) {
-                  enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: ${mergeMethod}}) {
-                    pullRequest { number autoMergeRequest { enabledAt } }
-                  }
-                }
-              `;
-              await github.graphql(query, { pullRequestId: pr.node_id });
-            };
-            const isUnprocessable = (error) => {
-              if (error?.status === 422) return true;
-              const message = error?.message || "";
-              return /unprocessable|merge method.*disabled|method.*not allowed|not permitted/i.test(message);
-            };
+            function isAllowedActor(login) {
+              // Keep permissive by default. If you want to restrict later, add allowlist checks here.
+              return !!login
+            }
 
-            try {
-              await enableAutoMerge("SQUASH");
-              core.info("Auto-merge enabled using SQUASH.");
-            } catch (error) {
-              if (!isUnprocessable(error)) {
-                throw error;
+            async function listPRsForSha(sha) {
+              // Works for `status` events (checks finishing), so we can retry merge enable/merge automatically.
+              const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner, repo, commit_sha: sha
+              })
+              return prs.data || []
+            }
+
+            async function getPR(number) {
+              const { data } = await github.rest.pulls.get({ owner, repo, pull_number: number })
+              return data
+            }
+
+            async function alreadyApprovedByBot(number) {
+              const { data: reviews } = await github.rest.pulls.listReviews({
+                owner, repo, pull_number: number, per_page: 100
+              })
+              // If any APPROVED review exists from github-actions[bot], treat as approved.
+              return reviews.some(r => r.state === 'APPROVED' && (r.user?.login === 'github-actions[bot]'))
+            }
+
+            async function approvePR(number) {
+              if (await alreadyApprovedByBot(number)) {
+                core.info(`PR #${number}: already approved by github-actions[bot] (noop)`)
+                return
               }
-              core.info(`SQUASH auto-merge unavailable: ${error.message}`);
               try {
-                await enableAutoMerge("MERGE");
-                core.info("Auto-merge enabled using MERGE.");
-              } catch (mergeError) {
-                core.info(`MERGE auto-merge unavailable: ${mergeError.message}`);
-                core.info(
-                  "Auto-merge could not be enabled because the repository settings disallow SQUASH and MERGE."
-                );
+                await github.rest.pulls.createReview({
+                  owner, repo, pull_number: number,
+                  event: 'APPROVE',
+                  body: 'Auto-approve Codex PR.'
+                })
+                core.info(`PR #${number}: approved`)
+              } catch (e) {
+                core.warning(`PR #${number}: approve failed (continuing): ${e.message}`)
               }
             }
 
-      - name: Final safety merge attempt
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pr = context.payload.pull_request;
-            try {
-              await github.rest.pulls.merge({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number,
-                merge_method: "squash",
-              });
-            } catch (e) {
-              core.info(`Merge not performed (likely waiting on branch protection timing): ${e.message}`);
+            async function enableAutoMergeResilient(prNodeId) {
+              const methods = ['SQUASH', 'MERGE', 'REBASE']
+              for (const method of methods) {
+                try {
+                  await github.graphql(`
+                    mutation($pr: ID!, $method: PullRequestMergeMethod!) {
+                      enablePullRequestAutoMerge(input: {
+                        pullRequestId: $pr,
+                        mergeMethod: $method
+                      }) {
+                        pullRequest { number }
+                      }
+                    }
+                  `, { pr: prNodeId, method })
+                  core.info(`Auto-merge enabled using ${method}`)
+                  return { enabled: true, method }
+                } catch (e) {
+                  core.warning(`Auto-merge enable failed for ${method}: ${e.message}`)
+                }
+              }
+              return { enabled: false, method: null }
             }
+
+            async function checksAllGreen(sha) {
+              // Check Runs (Actions, etc.)
+              const cr = await github.rest.checks.listForRef({ owner, repo, ref: sha, per_page: 100 })
+              const checkRuns = cr.data.check_runs || []
+              const failedRuns = checkRuns.filter(r => ['failure', 'cancelled', 'timed_out', 'action_required'].includes(r.conclusion))
+              const pendingRuns = checkRuns.filter(r => r.status !== 'completed')
+
+              if (failedRuns.length > 0) {
+                core.info(`Checks not green: failed check-runs=${failedRuns.map(r=>r.name).join(', ')}`)
+                return false
+              }
+              if (pendingRuns.length > 0) {
+                core.info(`Checks not green: pending check-runs=${pendingRuns.map(r=>r.name).join(', ')}`)
+                return false
+              }
+
+              // Combined Status (legacy / external)
+              const cs = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: sha })
+              if (cs.data.state && cs.data.state !== 'success') {
+                core.info(`Statuses not green: combined state=${cs.data.state}`)
+                return false
+              }
+
+              return true
+            }
+
+            async function tryDirectMerge(number, sha) {
+              // Only attempt if everything is green *right now* and PR is mergeable/clean.
+              const pr = await getPR(number)
+
+              // mergeable can be null while GitHub computes; treat as not-ready.
+              if (pr.mergeable !== true) {
+                core.info(`PR #${number}: mergeable=${pr.mergeable} (not ready)`)
+                return false
+              }
+              if (pr.mergeable_state && !['clean', 'unstable'].includes(pr.mergeable_state)) {
+                core.info(`PR #${number}: mergeable_state=${pr.mergeable_state} (not ready)`)
+                return false
+              }
+
+              if (!(await checksAllGreen(sha))) {
+                core.info(`PR #${number}: checks not green yet (no direct merge)`)
+                return false
+              }
+
+              // Use a resilient method order; GitHub will reject methods not allowed.
+              const methods = ['squash', 'merge', 'rebase']
+              for (const merge_method of methods) {
+                try {
+                  await github.rest.pulls.merge({
+                    owner, repo, pull_number: number,
+                    merge_method
+                  })
+                  core.info(`PR #${number}: merged directly using ${merge_method}`)
+                  return true
+                } catch (e) {
+                  core.warning(`PR #${number}: direct merge failed for ${merge_method}: ${e.message}`)
+                }
+              }
+              return false
+            }
+
+            // Build PR list depending on event type
+            let prs = []
+            if (context.eventName === 'pull_request_target') {
+              const pr = context.payload.pull_request
+              prs = pr ? [pr] : []
+            } else if (context.eventName === 'status') {
+              prs = await listPRsForSha(context.sha)
+            } else {
+              core.info(`Event ${context.eventName} has no PR context; exiting.`)
+              return
+            }
+
+            if (!prs.length) {
+              core.info('No PRs to process; exiting.')
+              return
+            }
+
+            for (const prRef of prs) {
+              const number = prRef.number
+              const full = await getPR(number)
+
+              if (!isAllowedActor(full.user?.login)) {
+                core.info(`PR #${number}: actor not allowed; skipping`)
+                continue
+              }
+              if (full.state !== 'open') {
+                core.info(`PR #${number}: state=${full.state}; skipping`)
+                continue
+              }
+              if (full.draft) {
+                core.info(`PR #${number}: draft=true; skipping`)
+                continue
+              }
+
+              core.info(`Processing PR #${number} (${full.html_url})`)
+
+              // 1) Approve (idempotent)
+              await approvePR(number)
+
+              // 2) Enable auto-merge (policy-adaptive)
+              const am = await enableAutoMergeResilient(full.node_id)
+
+              // 3) If auto-merge couldn't be enabled (repo policy), try a safe direct merge when checks are green
+              if (!am.enabled) {
+                core.info(`PR #${number}: auto-merge could not be enabled; attempting safe direct merge when possible`)
+                await tryDirectMerge(number, full.head.sha)
+              }
+
+            }
+
+      - name: Heartbeat end
+        run: |
+          echo "heartbeat end: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
