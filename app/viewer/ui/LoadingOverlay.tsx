@@ -7,6 +7,7 @@ type LoadingOverlayProps = {
   progress: LoadProgress | null;
   isReady: boolean;
   missingMain: boolean;
+  missingMainDetails: string | null;
   error: { title: string; details?: string } | null;
   onFilePick: (file: File) => void;
 };
@@ -27,6 +28,7 @@ export default function LoadingOverlay({
   progress,
   isReady,
   missingMain,
+  missingMainDetails,
   error,
   onFilePick
 }: LoadingOverlayProps) {
@@ -40,7 +42,7 @@ export default function LoadingOverlay({
         {missingMain ? (
           <>
             <div className="title">missing main.glb</div>
-            <div className="message">main.glb missing at /assets/main/main.glb</div>
+            <div className="message">{missingMainDetails ?? "main.glb missing at /assets/main/main.glb"}</div>
             <label className="picker">
               <input
                 type="file"
