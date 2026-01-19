@@ -30,20 +30,46 @@ jobs:
               body: "Auto-approve Codex PR."
             });
 
-      - name: Enable auto-merge (squash)
+      - name: Enable auto-merge (squash with merge fallback)
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const pr = context.payload.pull_request;
-            const query = `
-              mutation($pullRequestId: ID!) {
-                enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: SQUASH}) {
-                  pullRequest { number autoMergeRequest { enabledAt } }
+            const enableAutoMerge = async (mergeMethod) => {
+              const query = `
+                mutation($pullRequestId: ID!) {
+                  enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: ${mergeMethod}}) {
+                    pullRequest { number autoMergeRequest { enabledAt } }
+                  }
                 }
+              `;
+              await github.graphql(query, { pullRequestId: pr.node_id });
+            };
+            const isUnprocessable = (error) => {
+              if (error?.status === 422) return true;
+              const message = error?.message || "";
+              return /unprocessable|merge method.*disabled|method.*not allowed|not permitted/i.test(message);
+            };
+
+            try {
+              await enableAutoMerge("SQUASH");
+              core.info("Auto-merge enabled using SQUASH.");
+            } catch (error) {
+              if (!isUnprocessable(error)) {
+                throw error;
               }
-            `;
-            await github.graphql(query, { pullRequestId: pr.node_id });
+              core.info(`SQUASH auto-merge unavailable: ${error.message}`);
+              try {
+                await enableAutoMerge("MERGE");
+                core.info("Auto-merge enabled using MERGE.");
+              } catch (mergeError) {
+                core.info(`MERGE auto-merge unavailable: ${mergeError.message}`);
+                core.info(
+                  "Auto-merge could not be enabled because the repository settings disallow SQUASH and MERGE."
+                );
+              }
+            }
 
       - name: Final safety merge attempt
         uses: actions/github-script@v7
