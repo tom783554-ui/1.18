@@ -1,4 +1,5 @@
 import { ArcRotateCamera, Color4, Engine, HemisphericLight, Scene, Vector3 } from "@babylonjs/core";
+import type { ArcRotateCameraPointersInput } from "@babylonjs/core/Cameras/Inputs/arcRotateCameraPointersInput";
 
 export type ControlState = {
   panVec: { x: number; y: number };
@@ -25,7 +26,8 @@ export const createScene = (engine: Engine, canvas: HTMLCanvasElement) => {
     scene
   );
   camera.attachControl(canvas, true);
-  const pointerInput = camera.inputs.attached.pointers;
+  const pointerInput =
+    camera.inputs.attached.pointers as unknown as ArcRotateCameraPointersInput | undefined;
   if (pointerInput) {
     pointerInput.multiTouchPanAndZoom = false;
     pointerInput.multiTouchPanning = false;
