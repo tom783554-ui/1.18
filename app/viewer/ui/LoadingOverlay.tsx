@@ -1,6 +1,6 @@
 "use client";
 
-import type { LoadProgress } from "../load/loadMainGlb";
+import { DEFAULT_GLB_PATH, type LoadProgress } from "../load/loadMainGlb";
 
 type LoadingOverlayProps = {
   isLoading: boolean;
@@ -42,7 +42,7 @@ export default function LoadingOverlay({
         {missingMain ? (
           <>
             <div className="title">missing main.glb</div>
-            <div className="message">{missingMainDetails ?? "main.glb missing at /assets/main/main.glb"}</div>
+            <div className="message">{missingMainDetails ?? `main.glb missing at ${DEFAULT_GLB_PATH}`}</div>
             <label className="picker">
               <input
                 type="file"
