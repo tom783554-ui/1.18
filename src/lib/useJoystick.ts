@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 
 type JoystickVector = { x: number; y: number };
+type PointerLike = { clientX: number; clientY: number; pointerId: number };
 
 type UseJoystickOptions = {
   radius?: number;
@@ -18,6 +19,7 @@ export const useJoystick = (options: UseJoystickOptions = {}) => {
   const [isActive, setIsActive] = useState(false);
   const pointerIdRef = useRef<number | null>(null);
   const originRef = useRef<JoystickVector | null>(null);
+  const activeElementRef = useRef<HTMLDivElement | null>(null);
 
   const reset = useCallback(() => {
     setVector({ x: 0, y: 0 });
@@ -25,10 +27,11 @@ export const useJoystick = (options: UseJoystickOptions = {}) => {
     setIsActive(false);
     pointerIdRef.current = null;
     originRef.current = null;
+    activeElementRef.current = null;
   }, []);
 
   const updateFromEvent = useCallback(
-    (event: PointerEvent<HTMLDivElement>) => {
+    (event: PointerLike) => {
       if (pointerIdRef.current !== event.pointerId || !originRef.current) {
         return;
       }
@@ -55,6 +58,7 @@ export const useJoystick = (options: UseJoystickOptions = {}) => {
       event.currentTarget.setPointerCapture(event.pointerId);
       pointerIdRef.current = event.pointerId;
       originRef.current = { x: event.clientX, y: event.clientY };
+      activeElementRef.current = event.currentTarget;
       setIsActive(true);
       setKnobPosition({ x: 0, y: 0 });
       setVector({ x: 0, y: 0 });
@@ -74,8 +78,11 @@ export const useJoystick = (options: UseJoystickOptions = {}) => {
   const endPointer = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       event.preventDefault();
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
+      if (pointerIdRef.current !== event.pointerId) {
+        return;
+      }
+      if (activeElementRef.current?.hasPointerCapture(event.pointerId)) {
+        activeElementRef.current.releasePointerCapture(event.pointerId);
       }
       reset();
       onEnd?.();
@@ -83,13 +90,48 @@ export const useJoystick = (options: UseJoystickOptions = {}) => {
     [onEnd, reset]
   );
 
+  useEffect(() => {
+    if (!isActive) {
+      return;
+    }
+
+    const handleWindowPointerMove = (event: PointerEvent) => {
+      if (pointerIdRef.current !== event.pointerId) {
+        return;
+      }
+      event.preventDefault();
+      updateFromEvent(event);
+    };
+
+    const handleWindowPointerEnd = (event: PointerEvent) => {
+      if (pointerIdRef.current !== event.pointerId) {
+        return;
+      }
+      event.preventDefault();
+      if (activeElementRef.current?.hasPointerCapture(event.pointerId)) {
+        activeElementRef.current.releasePointerCapture(event.pointerId);
+      }
+      reset();
+      onEnd?.();
+    };
+
+    window.addEventListener("pointermove", handleWindowPointerMove, { passive: false });
+    window.addEventListener("pointerup", handleWindowPointerEnd);
+    window.addEventListener("pointercancel", handleWindowPointerEnd);
+
+    return () => {
+      window.removeEventListener("pointermove", handleWindowPointerMove);
+      window.removeEventListener("pointerup", handleWindowPointerEnd);
+      window.removeEventListener("pointercancel", handleWindowPointerEnd);
+    };
+  }, [isActive, onEnd, reset, updateFromEvent]);
+
   const bind = useMemo(
     () => ({
       onPointerDown: handlePointerDown,
       onPointerMove: handlePointerMove,
       onPointerUp: endPointer,
-      onPointerCancel: endPointer,
-      onPointerLeave: endPointer
+      onPointerCancel: endPointer
     }),
     [endPointer, handlePointerDown, handlePointerMove]
   );
