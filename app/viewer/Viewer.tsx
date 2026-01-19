@@ -3,13 +3,15 @@
 import { type ArcRotateCamera, type Engine, type Scene, Vector3 } from "@babylonjs/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEngine } from "./engine/createEngine";
-import { createScene } from "./scene/createScene";
+import { createScene, type ControlState as SceneControlState } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import Hud from "./ui/Hud";
 import LoadingOverlay from "./ui/LoadingOverlay";
+import ControlsOverlay, { type ControlState as OverlayControlState } from "../../src/components/ControlsOverlay";
 
 const READY_FLASH_MS = 900;
 const IDLE_FREEZE_MS = 2000;
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const isValidHttpsUrl = (value: string | null) => {
   if (!value) {
@@ -47,6 +49,23 @@ export default function Viewer() {
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const cleanupScalingRef = useRef<(() => void) | undefined>();
+  const setControlStateRef = useRef<((state: SceneControlState) => void) | null>(null);
+  const resetControlsRef = useRef<(() => void) | null>(null);
+  const overlayStateRef = useRef<OverlayControlState>({
+    panVec: { x: 0, y: 0 },
+    rotVec: { x: 0, y: 0 },
+    zoomIn: false,
+    zoomOut: false,
+    speed: 1
+  });
+  const keyboardStateRef = useRef({
+    panVec: { x: 0, y: 0 },
+    rotVec: { x: 0, y: 0 },
+    zoomIn: false,
+    zoomOut: false
+  });
+  const pressedKeysRef = useRef<Set<string>>(new Set());
+  const [resetSignal, setResetSignal] = useState(0);
 
   const [isLoading, setIsLoading] = useState(true);
   const [progress, setProgress] = useState<LoadProgress | null>(null);
@@ -93,6 +112,55 @@ export default function Viewer() {
     camera.radius = defaults.radius;
     camera.setTarget(new Vector3(defaults.target[0], defaults.target[1], defaults.target[2]));
   }, []);
+
+  const updateCombinedControls = useCallback(() => {
+    const overlay = overlayStateRef.current;
+    const keyboard = keyboardStateRef.current;
+    const combined: SceneControlState = {
+      panVec: {
+        x: clamp(overlay.panVec.x + keyboard.panVec.x, -1, 1),
+        y: clamp(overlay.panVec.y + keyboard.panVec.y, -1, 1)
+      },
+      rotVec: {
+        x: clamp(overlay.rotVec.x + keyboard.rotVec.x, -1, 1),
+        y: clamp(overlay.rotVec.y + keyboard.rotVec.y, -1, 1)
+      },
+      zoomIn: overlay.zoomIn || keyboard.zoomIn,
+      zoomOut: overlay.zoomOut || keyboard.zoomOut,
+      speed: overlay.speed
+    };
+    setControlStateRef.current?.(combined);
+  }, []);
+
+  const handleOverlayControls = useCallback(
+    (state: OverlayControlState) => {
+      overlayStateRef.current = state;
+      updateCombinedControls();
+    },
+    [updateCombinedControls]
+  );
+
+  const handleReset = useCallback(() => {
+    resetCamera();
+    resetControlsRef.current?.();
+    overlayStateRef.current = {
+      panVec: { x: 0, y: 0 },
+      rotVec: { x: 0, y: 0 },
+      zoomIn: false,
+      zoomOut: false,
+      speed: overlayStateRef.current.speed
+    };
+    keyboardStateRef.current = {
+      panVec: { x: 0, y: 0 },
+      rotVec: { x: 0, y: 0 },
+      zoomIn: false,
+      zoomOut: false
+    };
+    pressedKeysRef.current.clear();
+    updateCombinedControls();
+    setResetSignal((value) => value + 1);
+    markInteraction();
+  }, [markInteraction, resetCamera, updateCombinedControls]);
 
   const frameScene = useCallback(() => {
     const scene = sceneRef.current;
@@ -230,9 +298,12 @@ export default function Viewer() {
     engineRef.current = engine;
     cleanupScalingRef.current = cleanupScaling;
 
-    const { scene, camera } = createScene(engine, canvas);
+    const { scene, camera, setControlState, resetControls } = createScene(engine, canvas);
     sceneRef.current = scene;
     cameraRef.current = camera;
+    setControlStateRef.current = setControlState;
+    resetControlsRef.current = resetControls;
+    updateCombinedControls();
 
     cameraDefaults.current = {
       alpha: camera.alpha,
@@ -255,7 +326,67 @@ export default function Viewer() {
     interactionEvents.forEach((eventName) => {
       eventTarget.addEventListener(eventName, markInteraction, { passive: true });
     });
-    window.addEventListener("keydown", markInteraction, { passive: true });
+    const controlKeySet = new Set([
+      "w",
+      "a",
+      "s",
+      "d",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+      "+",
+      "=",
+      "-",
+      "_"
+    ]);
+
+    const updateKeyboardState = () => {
+      const keys = pressedKeysRef.current;
+      const panY = (keys.has("w") ? 1 : 0) + (keys.has("s") ? -1 : 0);
+      const panX = (keys.has("d") ? 1 : 0) + (keys.has("a") ? -1 : 0);
+      const rotY = (keys.has("ArrowUp") ? -1 : 0) + (keys.has("ArrowDown") ? 1 : 0);
+      const rotX = (keys.has("ArrowRight") ? 1 : 0) + (keys.has("ArrowLeft") ? -1 : 0);
+      const zoomIn = keys.has("+") || keys.has("=");
+      const zoomOut = keys.has("-") || keys.has("_");
+      keyboardStateRef.current = {
+        panVec: { x: clamp(panX, -1, 1), y: clamp(panY, -1, 1) },
+        rotVec: { x: clamp(rotX, -1, 1), y: clamp(rotY, -1, 1) },
+        zoomIn,
+        zoomOut
+      };
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!controlKeySet.has(event.key)) {
+        return;
+      }
+      event.preventDefault();
+      pressedKeysRef.current.add(event.key);
+      updateKeyboardState();
+      updateCombinedControls();
+      markInteraction();
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (!controlKeySet.has(event.key)) {
+        return;
+      }
+      event.preventDefault();
+      pressedKeysRef.current.delete(event.key);
+      updateKeyboardState();
+      updateCombinedControls();
+    };
+
+    const handleBlur = () => {
+      pressedKeysRef.current.clear();
+      updateKeyboardState();
+      updateCombinedControls();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleBlur);
     window.addEventListener("resize", handleResize, { passive: true });
 
     const params = new URLSearchParams(window.location.search);
@@ -272,27 +403,28 @@ export default function Viewer() {
       interactionEvents.forEach((eventName) => {
         eventTarget.removeEventListener(eventName, markInteraction);
       });
-      window.removeEventListener("keydown", markInteraction);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleBlur);
       window.removeEventListener("resize", handleResize);
       cleanupScalingRef.current?.();
       engine.stopRenderLoop();
       scene.dispose();
       engine.dispose();
     };
-  }, [loadScene, markInteraction]);
+  }, [loadScene, markInteraction, updateCombinedControls]);
 
   return (
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
       <Hud engine={engineRef.current} scene={sceneRef.current} />
-      <div className="controls">
-        <button type="button" onClick={resetCamera}>
-          Reset Camera
-        </button>
-        <button type="button" onClick={copyShareLink}>
-          Copy share link
-        </button>
-      </div>
+      <ControlsOverlay
+        onControlChange={handleOverlayControls}
+        onReset={handleReset}
+        onShare={copyShareLink}
+        onInteraction={markInteraction}
+        resetSignal={resetSignal}
+      />
       {missingMain ? (
         <div className="banner" role="status">
           <strong>missing main.glb</strong>
@@ -322,14 +454,6 @@ export default function Viewer() {
           display: block;
           touch-action: none;
         }
-        .controls {
-          position: absolute;
-          left: 12px;
-          bottom: 12px;
-          display: flex;
-          gap: 8px;
-          z-index: 5;
-        }
         .banner {
           position: absolute;
           top: 12px;
@@ -350,18 +474,6 @@ export default function Viewer() {
         .banner span {
           color: rgba(255, 255, 255, 0.9);
           font-weight: 500;
-        }
-        button {
-          background: rgba(20, 20, 20, 0.8);
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          border-radius: 8px;
-          color: #f8fafc;
-          padding: 6px 10px;
-          font-size: 12px;
-          cursor: pointer;
-        }
-        button:hover {
-          border-color: rgba(255, 255, 255, 0.4);
         }
       `}</style>
     </div>
