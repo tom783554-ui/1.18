@@ -53,6 +53,7 @@ export default function Viewer() {
   const [progress, setProgress] = useState<LoadProgress | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [missingMain, setMissingMain] = useState(false);
+  const [missingMainDetails, setMissingMainDetails] = useState<string | null>(null);
   const [error, setError] = useState<{ title: string; details?: string } | null>(null);
   const [shareGlbParam, setShareGlbParam] = useState<string | null>(null);
 
@@ -114,6 +115,7 @@ export default function Viewer() {
 
       setIsLoading(true);
       setMissingMain(false);
+      setMissingMainDetails(null);
       setError(null);
       setProgress(null);
 
@@ -133,6 +135,7 @@ export default function Viewer() {
         const message = err instanceof Error ? err.message : String(err);
         if (isDefault) {
           setMissingMain(true);
+          setMissingMainDetails(`Missing default GLB at ${url}. ${message}`);
           setIsLoading(false);
           setError(null);
           return;
@@ -230,11 +233,18 @@ export default function Viewer() {
           Copy share link
         </button>
       </div>
+      {missingMain ? (
+        <div className="banner" role="status">
+          <strong>missing main.glb</strong>
+          <span>{missingMainDetails ?? `Missing default GLB at ${DEFAULT_GLB}.`}</span>
+        </div>
+      ) : null}
       <LoadingOverlay
         isLoading={isLoading}
         progress={progress}
         isReady={isReady}
         missingMain={missingMain}
+        missingMainDetails={missingMainDetails}
         error={error}
         onFilePick={handleFilePick}
       />
@@ -259,6 +269,27 @@ export default function Viewer() {
           display: flex;
           gap: 8px;
           z-index: 5;
+        }
+        .banner {
+          position: absolute;
+          top: 12px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(190, 30, 30, 0.92);
+          color: #fff;
+          padding: 8px 12px;
+          border-radius: 999px;
+          font-size: 12px;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          z-index: 7;
+          max-width: min(92vw, 520px);
+          text-align: center;
+        }
+        .banner span {
+          color: rgba(255, 255, 255, 0.9);
+          font-weight: 500;
         }
         button {
           background: rgba(20, 20, 20, 0.8);
