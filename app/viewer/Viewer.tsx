@@ -28,6 +28,7 @@ type OverlayMetrics = {
   textures: number;
   registeredLoaders: string;
   lastLoaderEvent: string;
+  glbFetch: string;
 };
 
 type AssetSummary = {
@@ -74,7 +75,8 @@ export default function Viewer() {
     materials: 0,
     textures: 0,
     registeredLoaders: "n/a",
-    lastLoaderEvent: "n/a"
+    lastLoaderEvent: "n/a",
+    glbFetch: "n/a"
   });
   const [assetSummary, setAssetSummary] = useState<AssetSummary>({
     nodes: 0,
@@ -198,21 +200,38 @@ export default function Viewer() {
     };
 
     let pluginObserver: Observer<ISceneLoaderPlugin | ISceneLoaderPluginAsync> | null = null;
+    const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string) => {
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      });
+      try {
+        return await Promise.race([promise, timeout]);
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+    };
+
     const loadGlb = async () => {
       try {
         const url = "/assets/main/main.glb";
-        setStatus("Downloading GLB (for header check)...");
+        setStatus("Fetching GLB...");
         const response = await fetch(url, { cache: "no-store" });
         const contentType = response.headers.get("content-type") ?? "unknown";
         const statusCode = response.status;
+        setMetrics((prev) => ({
+          ...prev,
+          glbFetch: `HTTP ${statusCode} (${contentType})`
+        }));
         setAssetSummary((prev) => ({
           ...prev,
           glbFetchStatus: statusCode,
           glbContentType: contentType
         }));
-        if (statusCode !== 200) {
-          setStatus(`GLB fetch failed HTTP ${statusCode}`);
-          return;
+        if (!response.ok) {
+          throw new Error(`GLB fetch failed: HTTP ${statusCode}`);
         }
         const glbBuf = await response.arrayBuffer();
         const byteLength = glbBuf.byteLength;
@@ -273,32 +292,72 @@ export default function Viewer() {
         (FilesInputStore as any).FilesToLoad = (FilesInputStore as any).FilesToLoad || {};
         (FilesInputStore as any).FilesToLoad["main.glb"] = glbFile;
 
-        setStatus("Loading GLB via AppendAsync (file:)...");
+        setStatus("Load path: file:+AppendAsync (memory)");
         const stage = { done: false };
-        const watchdog = setTimeout(() => {
-          if (stage.done) {
-            return;
-          }
-          setStatus("TIMEOUT: AppendAsync(file:) hung on iOS Safari");
-          setMetrics((prev) => ({
-            ...prev,
-            lastLoaderEvent: "TIMEOUT fired (8s)"
-          }));
-        }, 8000);
+        let appendTimedOut = false;
+        let appendFailed = false;
+        let appendErrorMessage = "";
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        const appendTimeout = new Promise<never>((_, reject) => {
+          watchdog = setTimeout(() => {
+            if (stage.done) {
+              return;
+            }
+            appendTimedOut = true;
+            setStatus("TIMEOUT: AppendAsync(file:) hung (8s)");
+            setMetrics((prev) => ({
+              ...prev,
+              lastLoaderEvent: "TIMEOUT fired (8s)"
+            }));
+            reject(new Error("AppendAsync timed out after 8000ms"));
+          }, 8000);
+        });
 
         try {
-          await SceneLoader.AppendAsync("file:", "main.glb", scene, undefined, ".glb");
+          await Promise.race([
+            SceneLoader.AppendAsync("file:", "main.glb", scene, undefined, ".glb"),
+            appendTimeout
+          ]);
           stage.done = true;
-          clearTimeout(watchdog);
+          if (watchdog) {
+            clearTimeout(watchdog);
+          }
           setStatus(
             `Loaded OK: meshes=${scene.meshes.length} nodes=${scene.transformNodes.length} mats=${scene.materials.length}`
           );
         } catch (err: unknown) {
           stage.done = true;
-          clearTimeout(watchdog);
+          if (watchdog) {
+            clearTimeout(watchdog);
+          }
           const message = (err as Error)?.message ?? String(err);
-          setStatus(`GLB load failed: ${message}`);
-          return;
+          appendFailed = true;
+          appendErrorMessage = message;
+          if (!appendTimedOut) {
+            setStatus(`AppendAsync failed: ${message}`);
+          }
+        }
+
+        if (appendTimedOut || appendFailed) {
+          setStatus("Fallback: ImportMeshAsync (URL) ...");
+          try {
+            const rootUrl = "/assets/main/";
+            const file = "main.glb";
+            const result = await withTimeout(
+              SceneLoader.ImportMeshAsync(null, rootUrl, file, scene, undefined, ".glb"),
+              12000,
+              "ImportMeshAsync"
+            );
+            setStatus(`Fallback OK: meshes=${result.meshes?.length ?? 0}`);
+          } catch (error) {
+            const message = (error as Error)?.message ?? String(error);
+            setStatus(
+              appendTimedOut
+                ? `Fallback failed after AppendAsync timeout: ${message}`
+                : `Fallback failed after AppendAsync error: ${appendErrorMessage || message}`
+            );
+            return;
+          }
         }
 
         const glbMeshes = scene.meshes.filter((mesh) => mesh.name !== "debug-cube");
@@ -387,7 +446,6 @@ export default function Viewer() {
         console.warn("glTF loader unavailable — attempting load anyway");
       }
 
-      setStatus("Loading GLB...");
       pluginObserver = SceneLoader.OnPluginActivatedObservable.add((plugin) => {
         console.log("Plugin activated:", plugin.name);
         setMetrics((prev) => ({
@@ -425,7 +483,7 @@ export default function Viewer() {
         });
         setMetrics((prev) => ({
           ...prev,
-          lastLoaderEvent: "glTF plugin activated (range/incremental OFF)"
+          lastLoaderEvent: "glTF activated (range/incremental OFF)"
         }));
         console.log("GLTF loader verbose logging enabled");
       });
@@ -453,6 +511,12 @@ export default function Viewer() {
       <canvas ref={canvasRef} className="canvas" />
       <div className="overlay">
         <div className="overlay-title">Babylon Viewer</div>
+        <div className="overlay-row">
+          build: {process.env.NEXT_PUBLIC_BUILD_SHA ?? "dev"}
+        </div>
+        <div className="overlay-row">
+          built: {process.env.NEXT_PUBLIC_BUILD_TIME ?? "n/a"}
+        </div>
         <div className="overlay-row">Status: {status}</div>
         <div className="overlay-row">FPS: {metrics.fps}</div>
         <div className="overlay-row">scene.meshes.length: {metrics.sceneMeshes}</div>
@@ -466,13 +530,11 @@ export default function Viewer() {
           glTF loader available: {String(SceneLoader.IsPluginForExtensionAvailable(".glb"))}
         </div>
         <div className="overlay-row">last loader event: {metrics.lastLoaderEvent}</div>
-        <div className="overlay-row">Load path: file: + AppendAsync</div>
+        <div className="overlay-row">GLB Fetch: {metrics.glbFetch}</div>
+        <div className="overlay-row">Load path: file:+AppendAsync (memory)</div>
         <div className="overlay-row">
           GLB Header: {assetSummary.glbMagicHex} v{assetSummary.glbVersion ?? "?"} ( 
           {assetSummary.glbByteLength ?? "?"} bytes)
-        </div>
-        <div className="overlay-row">
-          GLB Fetch: HTTP {assetSummary.glbFetchStatus ?? "?"} ({assetSummary.glbContentType})
         </div>
         <div className="overlay-row">
           GLB Valid: magic {assetSummary.glbMagicOk ? "OK" : "BAD"}, size{" "}
