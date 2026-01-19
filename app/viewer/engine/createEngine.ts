@@ -1,16 +1,15 @@
 import { Engine } from "@babylonjs/core";
-import { isMobileDevice } from "../utils/device";
+import { applyAdaptiveScaling } from "../utils/device";
 
 export const createEngine = (canvas: HTMLCanvasElement) => {
   const engine = new Engine(canvas, true, {
     preserveDrawingBuffer: false,
-    stencil: true,
+    stencil: false,
     antialias: true,
-    adaptToDeviceRatio: true
+    audioEngine: false
   });
 
-  const scaling = isMobileDevice() ? 2 : 1;
-  engine.setHardwareScalingLevel(scaling);
+  const cleanupScaling = applyAdaptiveScaling(engine);
 
-  return engine;
+  return { engine, cleanupScaling };
 };
