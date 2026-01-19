@@ -14,6 +14,7 @@ import {
   Vector3
 } from "@babylonjs/core";
 import { SceneLoader } from "@babylonjs/core/Loading/sceneLoader";
+import { FilesInputStore } from "@babylonjs/core/Misc/filesInputStore";
 import { AxesViewer } from "@babylonjs/core/Debug/axesViewer";
 import { GLTFFileLoader } from "@babylonjs/loaders/glTF";
 
@@ -213,9 +214,9 @@ export default function Viewer() {
           setStatus(`GLB fetch failed HTTP ${statusCode}`);
           return;
         }
-        const arrayBuffer = await response.arrayBuffer();
-        const byteLength = arrayBuffer.byteLength;
-        const bytes = new Uint8Array(arrayBuffer.slice(0, 32));
+        const glbBuf = await response.arrayBuffer();
+        const byteLength = glbBuf.byteLength;
+        const bytes = new Uint8Array(glbBuf.slice(0, 32));
         const hex = toHex(bytes);
         console.log("GLB first 32 bytes (hex)", hex);
         console.log("GLB file size (bytes)", byteLength);
@@ -226,7 +227,7 @@ export default function Viewer() {
           return;
         }
 
-        const dataView = new DataView(arrayBuffer);
+        const dataView = new DataView(glbBuf);
         const magic = dataView.getUint32(0, true);
         const version = dataView.getUint32(4, true);
         const length = dataView.getUint32(8, true);
@@ -266,35 +267,51 @@ export default function Viewer() {
             ` size ${sizeOk ? "OK" : "MISMATCH"} (bytes ${byteLength})`
         );
 
-        setStatus("Loading GLB into AssetContainer...");
-        const container = await SceneLoader.LoadAssetContainerAsync(
-          "",
-          url,
-          scene,
-          undefined,
-          ".glb"
-        );
-        console.log("GLB AssetContainer loaded", {
-          meshes: container.meshes.length,
-          transformNodes: container.transformNodes.length,
-          materials: container.materials.length,
-          textures: container.textures.length,
-          animationGroups: container.animationGroups.length
+        const glbFile = new File([new Uint8Array(glbBuf)], "main.glb", {
+          type: "model/gltf-binary"
         });
-        container.addAllToScene();
-        const nodeCount = container.transformNodes.length + container.meshes.length;
+        (FilesInputStore as any).FilesToLoad = (FilesInputStore as any).FilesToLoad || {};
+        (FilesInputStore as any).FilesToLoad["main.glb"] = glbFile;
+
+        setStatus("Loading GLB via AppendAsync (file:)...");
+        const stage = { done: false };
+        const watchdog = setTimeout(() => {
+          if (stage.done) {
+            return;
+          }
+          setStatus("TIMEOUT: AppendAsync(file:) hung on iOS Safari");
+          setMetrics((prev) => ({
+            ...prev,
+            lastLoaderEvent: "TIMEOUT fired (8s)"
+          }));
+        }, 8000);
+
+        try {
+          await SceneLoader.AppendAsync("file:", "main.glb", scene, undefined, ".glb");
+          stage.done = true;
+          clearTimeout(watchdog);
+          setStatus(
+            `Loaded OK: meshes=${scene.meshes.length} nodes=${scene.transformNodes.length} mats=${scene.materials.length}`
+          );
+        } catch (err: unknown) {
+          stage.done = true;
+          clearTimeout(watchdog);
+          const message = (err as Error)?.message ?? String(err);
+          setStatus(`GLB load failed: ${message}`);
+          return;
+        }
+
+        const glbMeshes = scene.meshes.filter((mesh) => mesh.name !== "debug-cube");
+        const glbNodes = scene.transformNodes.filter((node) => node.name !== "debug-cube");
         setAssetSummary((prev) => ({
           ...prev,
-          nodes: nodeCount,
-          meshes: container.meshes.length,
-          materials: container.materials.length,
-          textures: container.textures.length
+          nodes: glbNodes.length + glbMeshes.length,
+          meshes: glbMeshes.length,
+          materials: scene.materials.length,
+          textures: scene.textures.length
         }));
-        setStatus(
-          `Container loaded: meshes=${container.meshes.length}, mats=${container.materials.length}, tex=${container.textures.length}`
-        );
 
-        const renderables = container.meshes.filter((mesh) => mesh.getTotalVertices() > 0);
+        const renderables = glbMeshes.filter((mesh) => mesh.getTotalVertices() > 0);
         if (renderables.length === 0) {
           setStatus("GLB HAS NO RENDERABLE GEOMETRY (root/nodes only)");
           console.warn("No vertices found. Export is empty or only empties/transforms.");
@@ -351,7 +368,10 @@ export default function Viewer() {
           max: max.toString()
         });
 
-        setStatus(`GLB VISIBLE FORCED (renderables=${renderables.length})`);
+        setMetrics((prev) => ({
+          ...prev,
+          lastLoaderEvent: `GLB visible forced (renderables=${renderables.length})`
+        }));
       } catch (error) {
         console.error("GLB load failed", error);
         setStatus("GLB load failed ❌ (see console)");
@@ -374,20 +394,40 @@ export default function Viewer() {
           ...prev,
           lastLoaderEvent: `Plugin activated: ${plugin.name}`
         }));
-        if (plugin.name.toLowerCase().includes("gltf")) {
-          const gltfLoader = plugin as GLTFFileLoader;
-          gltfLoader.loggingEnabled = true;
-          gltfLoader.capturePerformanceCounters = true;
-          gltfLoader.validate = false;
-          gltfLoader.onLoaderStateChangedObservable?.add((state) => {
-            console.log("GLTF loader state", state);
-            setMetrics((prev) => ({
-              ...prev,
-              lastLoaderEvent: `GLTF state: ${state}`
-            }));
-          });
-          console.log("GLTF loader verbose logging enabled");
+        const name = String((plugin as { name?: string })?.name ?? "").toLowerCase();
+        if (!name.includes("gltf")) {
+          return;
         }
+        const gltfLoader = plugin as GLTFFileLoader;
+        try {
+          (gltfLoader as { useRangeRequests?: boolean }).useRangeRequests = false;
+        } catch {}
+        try {
+          (gltfLoader as { incrementalLoading?: boolean }).incrementalLoading = false;
+        } catch {}
+        try {
+          (gltfLoader as { compileMaterials?: boolean }).compileMaterials = false;
+        } catch {}
+        try {
+          (gltfLoader as { compileShadowGenerators?: boolean }).compileShadowGenerators = false;
+        } catch {}
+        try {
+          gltfLoader.loggingEnabled = true;
+        } catch {}
+        gltfLoader.capturePerformanceCounters = true;
+        gltfLoader.validate = false;
+        gltfLoader.onLoaderStateChangedObservable?.add((state) => {
+          console.log("GLTF loader state", state);
+          setMetrics((prev) => ({
+            ...prev,
+            lastLoaderEvent: `GLTF state: ${state}`
+          }));
+        });
+        setMetrics((prev) => ({
+          ...prev,
+          lastLoaderEvent: "glTF plugin activated (range/incremental OFF)"
+        }));
+        console.log("GLTF loader verbose logging enabled");
       });
 
       await loadGlb();
@@ -426,6 +466,7 @@ export default function Viewer() {
           glTF loader available: {String(SceneLoader.IsPluginForExtensionAvailable(".glb"))}
         </div>
         <div className="overlay-row">last loader event: {metrics.lastLoaderEvent}</div>
+        <div className="overlay-row">Load path: file: + AppendAsync</div>
         <div className="overlay-row">
           GLB Header: {assetSummary.glbMagicHex} v{assetSummary.glbVersion ?? "?"} ( 
           {assetSummary.glbByteLength ?? "?"} bytes)
