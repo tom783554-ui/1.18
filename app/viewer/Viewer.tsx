@@ -105,21 +105,24 @@ export default function Viewer() {
     let min: Vector3 | null = null;
     let max: Vector3 | null = null;
 
-    scene.meshes.forEach((mesh) => {
+    const meshes = scene.meshes;
+
+    for (const mesh of meshes) {
       if (mesh.name === "camera" || mesh.name === "hemi" || !mesh.isEnabled()) {
-        return;
+        continue;
       }
       mesh.computeWorldMatrix(true);
-      const { minimumWorld, maximumWorld } = mesh.getBoundingInfo().boundingBox;
-
-      if (!min || !max) {
-        min = minimumWorld.clone();
-        max = maximumWorld.clone();
-      } else {
-        min.minimizeInPlace(minimumWorld);
-        max.maximizeInPlace(maximumWorld);
+      const bi = mesh.getBoundingInfo?.();
+      if (!bi) {
+        continue;
       }
-    });
+      const bb = bi.boundingBox;
+      const vmin = bb.minimumWorld;
+      const vmax = bb.maximumWorld;
+
+      min = min ? Vector3.Minimize(min, vmin) : vmin.clone();
+      max = max ? Vector3.Maximize(max, vmax) : vmax.clone();
+    }
 
     if (!min || !max) {
       return;
