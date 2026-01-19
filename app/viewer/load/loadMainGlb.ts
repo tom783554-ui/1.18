@@ -8,6 +8,8 @@ export type LoadProgress = {
   statusText?: string;
 };
 
+export const DEFAULT_GLB_PATH = "/assets/main/main.glb";
+
 const LOAD_TIMEOUT_MS = 15000;
 
 const splitUrl = (u: string): { rootUrl: string; file: string } => {

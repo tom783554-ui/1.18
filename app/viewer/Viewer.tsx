@@ -1,14 +1,13 @@
 "use client";
 
+import { type ArcRotateCamera, type Engine, type Scene, Vector3 } from "@babylonjs/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Vector3, type ArcRotateCamera, type Engine, type Scene } from "@babylonjs/core";
 import { createEngine } from "./engine/createEngine";
 import { createScene } from "./scene/createScene";
-import { loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
+import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import Hud from "./ui/Hud";
 import LoadingOverlay from "./ui/LoadingOverlay";
 
-const DEFAULT_GLB = "/assets/main/main.glb";
 const READY_FLASH_MS = 900;
 const IDLE_FREEZE_MS = 2000;
 
@@ -251,7 +250,7 @@ export default function Viewer() {
     };
 
     const eventTarget: EventTarget = canvas;
-    const interactionEvents = ["pointerdown", "pointermove", "wheel", "touchstart", "touchmove"];    
+    const interactionEvents = ["pointerdown", "pointermove", "wheel", "touchstart", "touchmove"];
 
     interactionEvents.forEach((eventName) => {
       eventTarget.addEventListener(eventName, markInteraction, { passive: true });
@@ -263,7 +262,7 @@ export default function Viewer() {
     const urlParam = params.get("glb");
     const shouldUseRemote = isValidHttpsUrl(urlParam) ? urlParam : null;
 
-    void loadScene(shouldUseRemote ?? DEFAULT_GLB, !shouldUseRemote, shouldUseRemote);
+    void loadScene(shouldUseRemote ?? DEFAULT_GLB_PATH, !shouldUseRemote, shouldUseRemote);
 
     return () => {
       clearIdleTimer();
@@ -297,7 +296,7 @@ export default function Viewer() {
       {missingMain ? (
         <div className="banner" role="status">
           <strong>missing main.glb</strong>
-          <span>{missingMainDetails ?? `Missing default GLB at ${DEFAULT_GLB}.`}</span>
+          <span>{missingMainDetails ?? `Missing default GLB at ${DEFAULT_GLB_PATH}.`}</span>
         </div>
       ) : null}
       <LoadingOverlay
