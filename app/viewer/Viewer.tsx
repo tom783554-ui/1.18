@@ -1,6 +1,6 @@
 "use client";
 
-import { type ArcRotateCamera, type Engine, type Scene, Vector3 } from "@babylonjs/core";
+import { type ArcRotateCamera, type Engine, type Scene, Vector3, VertexBuffer } from "@babylonjs/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEngine } from "./engine/createEngine";
 import { createScene, type ControlState as SceneControlState } from "./scene/createScene";
@@ -36,6 +36,63 @@ const formatShareUrl = (glbUrl: string | null) => {
     return share.toString();
   }
   return base;
+};
+
+const findGreenDoorCenter = (scene: Scene, bounds: { min: Vector3; max: Vector3 }) => {
+  let bestScore = Number.NEGATIVE_INFINITY;
+  let bestCenter: Vector3 | null = null;
+  const extentX = bounds.max.x - bounds.min.x;
+  const extentZ = bounds.max.z - bounds.min.z;
+  const edgeScale = Math.max(extentX, extentZ);
+
+  for (const mesh of scene.meshes) {
+    if (!mesh.isEnabled() || mesh.name === "camera" || mesh.name === "hemi") {
+      continue;
+    }
+    const colors = mesh.getVerticesData(VertexBuffer.ColorKind);
+    if (!colors || colors.length < 3) {
+      continue;
+    }
+
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let count = 0;
+    for (let i = 0; i < colors.length; i += 4) {
+      r += colors[i];
+      g += colors[i + 1];
+      b += colors[i + 2];
+      count += 1;
+    }
+    if (!count) {
+      continue;
+    }
+    r /= count;
+    g /= count;
+    b /= count;
+    const greenScore = g - (r + b) / 2;
+    if (greenScore <= 0) {
+      continue;
+    }
+    const boundsInfo = mesh.getBoundingInfo?.().boundingBox;
+    if (!boundsInfo) {
+      continue;
+    }
+    const center = boundsInfo.minimumWorld.add(boundsInfo.maximumWorld).scale(0.5);
+    const distToEdgeX = Math.min(Math.abs(center.x - bounds.min.x), Math.abs(bounds.max.x - center.x));
+    const distToEdgeZ = Math.min(Math.abs(center.z - bounds.min.z), Math.abs(bounds.max.z - center.z));
+    const minEdgeDist = Math.min(distToEdgeX, distToEdgeZ);
+    const boundaryScore = edgeScale > 0 ? 1 - Math.min(minEdgeDist / edgeScale, 1) : 0;
+    const nameBonus = mesh.name.toLowerCase().includes("door") ? 0.5 : 0;
+    const combinedScore = greenScore + boundaryScore * 0.4 + nameBonus;
+    if (combinedScore <= bestScore) {
+      continue;
+    }
+    bestScore = combinedScore;
+    bestCenter = center.clone();
+  }
+
+  return bestCenter;
 };
 
 export default function Viewer() {
@@ -207,6 +264,32 @@ export default function Viewer() {
     const targetBeta = Math.PI / 2.4;
     const lowerBeta = camera.lowerBetaLimit ?? 0.01;
     const upperBeta = camera.upperBetaLimit ?? Math.PI - 0.01;
+
+    const greenDoorCenter = findGreenDoorCenter(scene, { min, max });
+    if (greenDoorCenter) {
+      const direction = greenDoorCenter.subtract(center);
+      const horizontal = Math.hypot(direction.x, direction.z);
+      const distance = Math.hypot(horizontal, direction.y);
+      if (horizontal > 0.01 && distance > 0.01) {
+        const desiredBeta = Math.acos(direction.y / distance);
+        const clampedBeta = Math.min(upperBeta, Math.max(lowerBeta, desiredBeta));
+        const sinBeta = Math.sin(clampedBeta);
+        const desiredRadius = sinBeta > 0.001 ? horizontal / sinBeta : clampedRadius;
+        const doorRadius = desiredRadius * 1.05;
+        const clampedDoorRadius = Math.min(upperRadius, Math.max(lowerRadius, doorRadius));
+        camera.alpha = Math.atan2(direction.z, direction.x);
+        camera.beta = clampedBeta;
+        camera.radius = clampedDoorRadius;
+        camera.setTarget(center);
+        cameraDefaults.current = {
+          alpha: camera.alpha,
+          beta: camera.beta,
+          radius: camera.radius,
+          target: [center.x, center.y, center.z]
+        };
+        return;
+      }
+    }
 
     camera.alpha = targetAlpha;
     camera.beta = Math.min(upperBeta, Math.max(lowerBeta, targetBeta));

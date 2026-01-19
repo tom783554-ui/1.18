@@ -1,4 +1,4 @@
-import { ArcRotateCamera, Color4, Engine, HemisphericLight, Scene, Vector3 } from "@babylonjs/core";
+import { ArcRotateCamera, Color3, Color4, DirectionalLight, Engine, HemisphericLight, Scene, Vector3 } from "@babylonjs/core";
 
 export type ControlState = {
   panVec: { x: number; y: number };
@@ -40,7 +40,12 @@ export const createScene = (engine: Engine, canvas: HTMLCanvasElement) => {
   camera.minZ = 0.01;
   camera.maxZ = 5000;
 
-  new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
+  const hemiLight = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
+  hemiLight.intensity = 1.35;
+  hemiLight.groundColor = new Color3(0.6, 0.6, 0.6);
+
+  const fillLight = new DirectionalLight("fill", new Vector3(-0.4, -1, -0.2), scene);
+  fillLight.intensity = 0.45;
 
   configureTextureCompression(scene);
 
