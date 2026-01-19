@@ -95,6 +95,62 @@ export default function Viewer() {
     camera.setTarget(new Vector3(defaults.target[0], defaults.target[1], defaults.target[2]));
   }, []);
 
+  const frameScene = useCallback(() => {
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!scene || !camera) {
+      return;
+    }
+
+    let min: Vector3 | null = null;
+    let max: Vector3 | null = null;
+
+    scene.meshes.forEach((mesh) => {
+      if (mesh.name === "camera" || mesh.name === "hemi" || !mesh.isEnabled()) {
+        return;
+      }
+      mesh.computeWorldMatrix(true);
+      const { minimumWorld, maximumWorld } = mesh.getBoundingInfo().boundingBox;
+
+      if (!min || !max) {
+        min = minimumWorld.clone();
+        max = maximumWorld.clone();
+      } else {
+        min.minimizeInPlace(minimumWorld);
+        max.maximizeInPlace(maximumWorld);
+      }
+    });
+
+    if (!min || !max) {
+      return;
+    }
+
+    const center = min.add(max).scale(0.5);
+    const baseRadius = max.subtract(center).length();
+    const paddedRadius = baseRadius * 2.6;
+    const lowerRadius = camera.lowerRadiusLimit ?? 0;
+    const upperRadius = camera.upperRadiusLimit ?? Number.POSITIVE_INFINITY;
+    const targetRadius = Math.max(paddedRadius, lowerRadius || camera.radius);
+    const clampedRadius = Math.min(upperRadius, Math.max(lowerRadius, targetRadius));
+
+    const targetAlpha = -Math.PI / 2;
+    const targetBeta = Math.PI / 2.4;
+    const lowerBeta = camera.lowerBetaLimit ?? 0.01;
+    const upperBeta = camera.upperBetaLimit ?? Math.PI - 0.01;
+
+    camera.alpha = targetAlpha;
+    camera.beta = Math.min(upperBeta, Math.max(lowerBeta, targetBeta));
+    camera.radius = clampedRadius;
+    camera.setTarget(center);
+
+    cameraDefaults.current = {
+      alpha: camera.alpha,
+      beta: camera.beta,
+      radius: camera.radius,
+      target: [center.x, center.y, center.z]
+    };
+  }, []);
+
   const copyShareLink = useCallback(async () => {
     if (!shareUrl) {
       return;
@@ -128,6 +184,7 @@ export default function Viewer() {
       try {
         await loadMainGlb(scene, url, (update) => setProgress({ ...update }));
         await scene.whenReadyAsync();
+        frameScene();
         setShareGlbParam(isDefault ? null : shareParam ?? null);
         setIsLoading(false);
         flashReady();
@@ -145,7 +202,7 @@ export default function Viewer() {
         setIsLoading(false);
       }
     },
-    [armIdleFreeze]
+    [armIdleFreeze, frameScene]
   );
 
   const handleFilePick = useCallback(
