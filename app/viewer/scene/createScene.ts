@@ -21,10 +21,10 @@ export const createScene = (engine: Engine, canvas: HTMLCanvasElement) => {
   camera.upperRadiusLimit = 120;
   camera.lowerBetaLimit = 0.2;
   camera.upperBetaLimit = Math.PI / 2.1;
-  camera.wheelPrecision = 80;
-  camera.pinchPrecision = 150;
+  camera.wheelPrecision = 140;
+  camera.pinchPrecision = 250;
   camera.panningSensibility = 90;
-  camera.minZ = 0.05;
+  camera.minZ = 0.01;
   camera.maxZ = 5000;
 
   new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
