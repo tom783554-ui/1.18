@@ -127,6 +127,7 @@ export default function Viewer() {
 
       try {
         await loadMainGlb(scene, url, (update) => setProgress({ ...update }));
+        await scene.whenReadyAsync();
         setShareGlbParam(isDefault ? null : shareParam ?? null);
         setIsLoading(false);
         flashReady();
