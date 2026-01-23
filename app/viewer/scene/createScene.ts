@@ -13,6 +13,27 @@ export const configureTextureCompression = (_scene: Scene) => {
   // TODO: wire KTX2/Basis support without runtime downloads.
 };
 
+export const configureCamera = (camera: ArcRotateCamera, canvas: HTMLCanvasElement) => {
+  camera.attachControl(canvas, true);
+  const pointerInput =
+    camera.inputs.attached.pointers as unknown as ArcRotateCameraPointersInput | undefined;
+  if (pointerInput) {
+    pointerInput.multiTouchPanAndZoom = false;
+    pointerInput.multiTouchPanning = false;
+  }
+  camera.lowerRadiusLimit = 0.05;
+  camera.upperRadiusLimit = 1000;
+  camera.lowerBetaLimit = 0.2;
+  camera.upperBetaLimit = Math.PI / 2.1;
+  camera.wheelPrecision = 20;
+  camera.pinchPrecision = 100;
+  camera.panningSensibility = 90;
+  camera.minZ = 0.01;
+  camera.maxZ = 5000;
+  camera.inertia = 0.7;
+  camera.checkCollisions = false;
+};
+
 export const createScene = (engine: Engine, canvas: HTMLCanvasElement) => {
   const scene = new Scene(engine);
   scene.clearColor = new Color4(0.2, 0.2, 0.2, 1);
@@ -33,22 +54,7 @@ export const createScene = (engine: Engine, canvas: HTMLCanvasElement) => {
     Vector3.Zero(),
     scene
   );
-  camera.attachControl(canvas, true);
-  const pointerInput =
-    camera.inputs.attached.pointers as unknown as ArcRotateCameraPointersInput | undefined;
-  if (pointerInput) {
-    pointerInput.multiTouchPanAndZoom = false;
-    pointerInput.multiTouchPanning = false;
-  }
-  camera.lowerRadiusLimit = 4;
-  camera.upperRadiusLimit = 20;
-  camera.lowerBetaLimit = 0.2;
-  camera.upperBetaLimit = Math.PI / 2.1;
-  camera.wheelPrecision = 140;
-  camera.pinchPrecision = 250;
-  camera.panningSensibility = 90;
-  camera.minZ = 0.05;
-  camera.maxZ = 5000;
+  configureCamera(camera, canvas);
 
   const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
   hemi.intensity = 0.7;
