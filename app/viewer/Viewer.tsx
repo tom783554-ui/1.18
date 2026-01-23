@@ -1,6 +1,15 @@
 "use client";
 
-import { type ArcRotateCamera, type Engine, type Scene, Vector3 } from "@babylonjs/core";
+import {
+  Color3,
+  Material,
+  PBRMaterial,
+  type AbstractMesh,
+  type ArcRotateCamera,
+  type Engine,
+  type Scene,
+  Vector3
+} from "@babylonjs/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEngine } from "./engine/createEngine";
 import { createScene } from "./scene/createScene";
@@ -10,6 +19,9 @@ import LoadingOverlay from "./ui/LoadingOverlay";
 
 const READY_FLASH_MS = 900;
 const IDLE_FREEZE_MS = 2000;
+const MAX_SCENE_DIMENSION = 20;
+const TARGET_SCENE_SIZE = 6;
+const isRenderableMesh = (mesh: AbstractMesh) => mesh.getTotalVertices?.() > 0 && mesh.isEnabled();
 const isValidHttpsUrl = (value: string | null) => {
   if (!value) {
     return false;
@@ -108,12 +120,9 @@ export default function Viewer() {
     let min: Vector3 | null = null;
     let max: Vector3 | null = null;
 
-    const meshes = scene.meshes;
+    const meshes = scene.meshes.filter((mesh) => isRenderableMesh(mesh));
 
     for (const mesh of meshes) {
-      if (mesh.name === "camera" || mesh.name === "hemi" || !mesh.isEnabled()) {
-        continue;
-      }
       mesh.computeWorldMatrix(true);
       const bi = mesh.getBoundingInfo?.();
       if (!bi) {
@@ -132,29 +141,79 @@ export default function Viewer() {
     }
 
     const center = min.add(max).scale(0.5);
-    const baseRadius = max.subtract(center).length();
-    const paddedRadius = baseRadius * 2.6;
-    const lowerRadius = camera.lowerRadiusLimit ?? 0;
-    const upperRadius = camera.upperRadiusLimit ?? Number.POSITIVE_INFINITY;
-    const targetRadius = Math.max(paddedRadius, lowerRadius || camera.radius);
-    const clampedRadius = Math.min(upperRadius, Math.max(lowerRadius, targetRadius));
-
-    const targetAlpha = -Math.PI / 2;
-    const targetBeta = Math.PI / 2.4;
-    const lowerBeta = camera.lowerBetaLimit ?? 0.01;
-    const upperBeta = camera.upperBetaLimit ?? Math.PI - 0.01;
-
-    camera.alpha = targetAlpha;
-    camera.beta = Math.min(upperBeta, Math.max(lowerBeta, targetBeta));
-    camera.radius = clampedRadius;
-    camera.setTarget(center);
+    const rootMesh = scene.getMeshByName("root");
+    const rootCenter = rootMesh?.getBoundingInfo?.().boundingBox.centerWorld;
+    const target = rootCenter ?? center;
+    camera.setTarget(target);
 
     cameraDefaults.current = {
       alpha: camera.alpha,
       beta: camera.beta,
       radius: camera.radius,
-      target: [center.x, center.y, center.z]
+      target: [target.x, target.y, target.z]
     };
+  }, []);
+
+  const normalizeScene = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene) {
+      return;
+    }
+
+    let min: Vector3 | null = null;
+    let max: Vector3 | null = null;
+    const meshes = scene.meshes.filter((mesh) => isRenderableMesh(mesh));
+
+    for (const mesh of meshes) {
+      mesh.computeWorldMatrix(true);
+      const bounds = mesh.getBoundingInfo?.();
+      if (!bounds) {
+        continue;
+      }
+      const bb = bounds.boundingBox;
+      min = min ? Vector3.Minimize(min, bb.minimumWorld) : bb.minimumWorld.clone();
+      max = max ? Vector3.Maximize(max, bb.maximumWorld) : bb.maximumWorld.clone();
+    }
+
+    if (!min || !max) {
+      return;
+    }
+
+    const size = max.subtract(min);
+    const maxDimension = Math.max(size.x, size.y, size.z);
+    const rootMesh =
+      scene.getMeshByName("root") ?? meshes[0] ?? scene.meshes[0] ?? null;
+
+    if (rootMesh && maxDimension > MAX_SCENE_DIMENSION) {
+      const scaleFactor = TARGET_SCENE_SIZE / maxDimension;
+      rootMesh.scaling = rootMesh.scaling.scale(scaleFactor);
+      rootMesh.computeWorldMatrix(true);
+      rootMesh.freezeWorldMatrix();
+    }
+
+    for (const mesh of meshes) {
+      const name = mesh.name.toLowerCase();
+      const material = mesh.material as Material | null;
+      let pbr: PBRMaterial;
+      if (material instanceof PBRMaterial) {
+        pbr = material;
+      } else {
+        pbr = new PBRMaterial(`${mesh.name}-pbr`, scene);
+        mesh.material = pbr;
+      }
+
+      pbr.albedoColor = new Color3(0.9, 0.9, 0.9);
+      pbr.roughness = 0.6;
+      pbr.metallic = 0.0;
+
+      if (name.includes("bed")) {
+        pbr.albedoColor = new Color3(0.85, 0.85, 0.88);
+      } else if (name.includes("wall") || name.includes("floor")) {
+        pbr.albedoColor = new Color3(0.75, 0.75, 0.75);
+      }
+    }
+
+    scene.freezeActiveMeshes();
   }, []);
 
   const copyShareLink = useCallback(async () => {
@@ -190,6 +249,7 @@ export default function Viewer() {
       try {
         await loadMainGlb(scene, url, (update) => setProgress({ ...update }));
         await scene.whenReadyAsync();
+        normalizeScene();
         frameScene();
         setShareGlbParam(isDefault ? null : shareParam ?? null);
         setIsLoading(false);
