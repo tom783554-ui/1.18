@@ -12,16 +12,21 @@ import {
 } from "@babylonjs/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEngine } from "./engine/createEngine";
-import { createScene } from "./scene/createScene";
+import { configureCamera, createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import Hud from "./ui/Hud";
 import LoadingOverlay from "./ui/LoadingOverlay";
+import ZoomTestOverlay from "./ui/ZoomTestOverlay";
 
 const READY_FLASH_MS = 900;
 const IDLE_FREEZE_MS = 2000;
 const MAX_SCENE_DIMENSION = 20;
 const TARGET_SCENE_SIZE = 6;
 const isRenderableMesh = (mesh: AbstractMesh) => mesh.getTotalVertices?.() > 0 && mesh.isEnabled();
+const isUtilityMesh = (mesh: AbstractMesh) => {
+  const name = mesh.name.toLowerCase();
+  return name.includes("sky") || name.includes("skybox") || name.includes("utility");
+};
 const isValidHttpsUrl = (value: string | null) => {
   if (!value) {
     return false;
@@ -58,6 +63,7 @@ export default function Viewer() {
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const cleanupScalingRef = useRef<(() => void) | undefined>();
+  const isNormalizedRef = useRef(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [progress, setProgress] = useState<LoadProgress | null>(null);
@@ -110,7 +116,7 @@ export default function Viewer() {
     markInteraction();
   }, [markInteraction, resetCamera]);
 
-  const frameScene = useCallback(() => {
+  const reframeScene = useCallback(() => {
     const scene = sceneRef.current;
     const camera = cameraRef.current;
     if (!scene || !camera) {
@@ -120,7 +126,9 @@ export default function Viewer() {
     let min: Vector3 | null = null;
     let max: Vector3 | null = null;
 
-    const meshes = scene.meshes.filter((mesh) => isRenderableMesh(mesh));
+    const meshes = scene.meshes.filter(
+      (mesh) => isRenderableMesh(mesh) && mesh.isVisible && !isUtilityMesh(mesh)
+    );
 
     for (const mesh of meshes) {
       mesh.computeWorldMatrix(true);
@@ -141,18 +149,71 @@ export default function Viewer() {
     }
 
     const center = min.add(max).scale(0.5);
-    const rootMesh = scene.getMeshByName("root");
-    const rootCenter = rootMesh?.getBoundingInfo?.().boundingBox.centerWorld;
-    const target = rootCenter ?? center;
-    camera.setTarget(target);
+    camera.setTarget(center);
+
+    const size = max.subtract(min);
+    const extents = size.scale(0.5);
+    const targetRadius = Math.max(extents.x, extents.y, extents.z) * 2.0;
+    const lowerLimit = camera.lowerRadiusLimit ?? 0;
+    const upperLimit = camera.upperRadiusLimit ?? targetRadius;
+    camera.radius = Math.min(Math.max(targetRadius, lowerLimit), upperLimit);
 
     cameraDefaults.current = {
       alpha: camera.alpha,
       beta: camera.beta,
       radius: camera.radius,
-      target: [target.x, target.y, target.z]
+      target: [center.x, center.y, center.z]
     };
   }, []);
+
+  const handleRecenter = useCallback(() => {
+    reframeScene();
+    markInteraction();
+  }, [markInteraction, reframeScene]);
+
+  const adjustZoom = useCallback((direction: 1 | -1) => {
+    const camera = cameraRef.current;
+    if (!camera) {
+      return;
+    }
+    const step = Math.max(camera.radius * 0.1, 0.02);
+    const nextRadius = camera.radius + step * direction;
+    const lowerLimit = camera.lowerRadiusLimit ?? 0;
+    const upperLimit = camera.upperRadiusLimit ?? nextRadius;
+    camera.radius = Math.min(Math.max(nextRadius, lowerLimit), upperLimit);
+    markInteraction();
+  }, [markInteraction]);
+
+  const handleZoomIn = useCallback(() => adjustZoom(-1), [adjustZoom]);
+  const handleZoomOut = useCallback(() => adjustZoom(1), [adjustZoom]);
+
+  const handleResetLimits = useCallback(() => {
+    const camera = cameraRef.current;
+    const canvas = canvasRef.current;
+    if (!camera || !canvas) {
+      return;
+    }
+    configureCamera(camera, canvas);
+    const lowerLimit = camera.lowerRadiusLimit ?? 0;
+    const upperLimit = camera.upperRadiusLimit ?? camera.radius;
+    camera.radius = Math.min(Math.max(camera.radius, lowerLimit), upperLimit);
+    markInteraction();
+  }, [markInteraction]);
+
+  const handleNormalizeGlb = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene || isNormalizedRef.current) {
+      return;
+    }
+    const roots = scene.meshes.filter((mesh) => !mesh.parent);
+    roots.forEach((mesh) => {
+      mesh.scaling = mesh.scaling.scale(0.01);
+      mesh.computeWorldMatrix(true);
+    });
+    isNormalizedRef.current = true;
+    reframeScene();
+    markInteraction();
+  }, [markInteraction, reframeScene]);
 
   const normalizeScene = useCallback(() => {
     const scene = sceneRef.current;
@@ -250,7 +311,7 @@ export default function Viewer() {
         await loadMainGlb(scene, url, (update) => setProgress({ ...update }));
         await scene.whenReadyAsync();
         normalizeScene();
-        frameScene();
+        reframeScene();
         setShareGlbParam(isDefault ? null : shareParam ?? null);
         setIsLoading(false);
         flashReady();
@@ -268,7 +329,7 @@ export default function Viewer() {
         setIsLoading(false);
       }
     },
-    [armIdleFreeze, frameScene]
+    [armIdleFreeze, reframeScene]
   );
 
   const handleFilePick = useCallback(
@@ -319,6 +380,12 @@ export default function Viewer() {
     interactionEvents.forEach((eventName) => {
       eventTarget.addEventListener(eventName, markInteraction, { passive: true });
     });
+    const preventScroll = (event: TouchEvent) => {
+      event.preventDefault();
+    };
+    canvas.addEventListener("touchstart", preventScroll, { passive: false });
+    canvas.addEventListener("touchmove", preventScroll, { passive: false });
+    canvas.addEventListener("touchend", preventScroll, { passive: false });
     window.addEventListener("resize", handleResize, { passive: true });
 
     const params = new URLSearchParams(window.location.search);
@@ -335,6 +402,9 @@ export default function Viewer() {
       interactionEvents.forEach((eventName) => {
         eventTarget.removeEventListener(eventName, markInteraction);
       });
+      canvas.removeEventListener("touchstart", preventScroll);
+      canvas.removeEventListener("touchmove", preventScroll);
+      canvas.removeEventListener("touchend", preventScroll);
       window.removeEventListener("resize", handleResize);
       cleanupScalingRef.current?.();
       engine.stopRenderLoop();
@@ -347,6 +417,15 @@ export default function Viewer() {
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
       <Hud engine={engineRef.current} scene={sceneRef.current} />
+      <ZoomTestOverlay
+        scene={sceneRef.current}
+        camera={cameraRef.current}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onRecenter={handleRecenter}
+        onResetLimits={handleResetLimits}
+        onNormalize={handleNormalizeGlb}
+      />
       <div className="control-bar" role="toolbar" aria-label="Viewer controls">
         <button type="button" onClick={handleReset}>
           Reset
