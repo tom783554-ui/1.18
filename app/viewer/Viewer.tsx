@@ -2,6 +2,7 @@
 
 import {
   Color3,
+  Material,
   PBRMaterial,
   type AbstractMesh,
   type ArcRotateCamera,
@@ -192,21 +193,23 @@ export default function Viewer() {
 
     for (const mesh of meshes) {
       const name = mesh.name.toLowerCase();
-      let material = mesh.material;
-      if (!material || !(material instanceof PBRMaterial)) {
-        material = new PBRMaterial(`${mesh.name}-pbr`, scene);
-        material.albedoColor = new Color3(0.9, 0.9, 0.9);
-        material.roughness = 0.6;
-        material.metallic = 0.0;
-        mesh.material = material;
+      const material = mesh.material as Material | null;
+      let pbr: PBRMaterial;
+      if (material instanceof PBRMaterial) {
+        pbr = material;
+      } else {
+        pbr = new PBRMaterial(`${mesh.name}-pbr`, scene);
+        mesh.material = pbr;
       }
 
-      if (material instanceof PBRMaterial) {
-        if (name.includes("bed")) {
-          material.albedoColor = new Color3(0.85, 0.85, 0.88);
-        } else if (name.includes("wall") || name.includes("floor")) {
-          material.albedoColor = new Color3(0.75, 0.75, 0.75);
-        }
+      pbr.albedoColor = new Color3(0.9, 0.9, 0.9);
+      pbr.roughness = 0.6;
+      pbr.metallic = 0.0;
+
+      if (name.includes("bed")) {
+        pbr.albedoColor = new Color3(0.85, 0.85, 0.88);
+      } else if (name.includes("wall") || name.includes("floor")) {
+        pbr.albedoColor = new Color3(0.75, 0.75, 0.75);
       }
     }
 
