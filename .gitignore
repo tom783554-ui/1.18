@@ -2,4 +2,3 @@ node_modules/
 .next/
 .env*
 .DS_Store
-public/assets/main/main.glb
