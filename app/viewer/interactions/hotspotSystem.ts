@@ -41,6 +41,7 @@ type HotspotSystemOptions = {
   uiRef: { current: AdvancedDynamicTexture | null };
   highlightLayerRef: { current: HighlightLayer | null };
   selectedRef: { current: HotspotEntry | null };
+  onDeselect?: () => void;
 };
 
 type HudElements = {
@@ -332,7 +333,8 @@ export function attachHotspotSystem({
   camera,
   uiRef,
   highlightLayerRef,
-  selectedRef
+  selectedRef,
+  onDeselect
 }: HotspotSystemOptions): { refresh: () => void; dispose: () => void } {
   const createdColliders: AbstractMesh[] = [];
   const testNodes: TransformNode[] = [];
@@ -362,6 +364,7 @@ export function attachHotspotSystem({
     highlightLayer.removeAllMeshes();
     updateHudVisibility(false);
     closePanel();
+    onDeselect?.();
   };
 
   const selectHotspot = (entry: HotspotEntry, pickedMesh?: AbstractMesh | null) => {
