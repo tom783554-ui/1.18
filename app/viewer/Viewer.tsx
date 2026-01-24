@@ -16,6 +16,7 @@ import { configureCamera, createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import Hud from "./ui/Hud";
 import LoadingOverlay from "./ui/LoadingOverlay";
+import Panels from "./ui/Panels";
 import ZoomTestOverlay from "./ui/ZoomTestOverlay";
 
 const READY_FLASH_MS = 900;
@@ -64,6 +65,7 @@ export default function Viewer() {
   const objectUrlRef = useRef<string | null>(null);
   const cleanupScalingRef = useRef<(() => void) | undefined>();
   const placeholderCleanupRef = useRef<(() => void) | null>(null);
+  const actionRouterCleanupRef = useRef<(() => void) | null>(null);
   const isNormalizedRef = useRef(false);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -74,6 +76,7 @@ export default function Viewer() {
   const [error, setError] = useState<{ title: string; details?: string } | null>(null);
   const [shareGlbParam, setShareGlbParam] = useState<string | null>(null);
   const [placeholderCount, setPlaceholderCount] = useState(0);
+  const [panel, setPanel] = useState<{ title: string; id: string } | null>(null);
 
   const shareUrl = useMemo(() => formatShareUrl(shareGlbParam), [shareGlbParam]);
 
@@ -305,7 +308,13 @@ export default function Viewer() {
 
       placeholderCleanupRef.current?.();
       placeholderCleanupRef.current = null;
+      const existingRouterCleanup = actionRouterCleanupRef.current as (() => void) | null;
+      if (existingRouterCleanup) {
+        existingRouterCleanup();
+      }
+      actionRouterCleanupRef.current = null;
       setPlaceholderCount(0);
+      setPanel(null);
 
       scene.meshes.slice().forEach((mesh) => {
         if (mesh.name !== "camera" && mesh.name !== "hemi") {
@@ -322,6 +331,15 @@ export default function Viewer() {
         setPlaceholderCount(wired.count);
         normalizeScene();
         reframeScene();
+        const { attachActionRouter } = await import("./interactions/actionRouter");
+        const existingRouterCleanup = actionRouterCleanupRef.current as (() => void) | null;
+        if (existingRouterCleanup) {
+          existingRouterCleanup();
+        }
+        actionRouterCleanupRef.current = attachActionRouter({
+          scene,
+          camera: scene.activeCamera
+        }) as () => void;
         setShareGlbParam(isDefault ? null : shareParam ?? null);
         setIsLoading(false);
         flashReady();
@@ -354,6 +372,23 @@ export default function Viewer() {
     },
     [loadScene]
   );
+
+  useEffect(() => {
+    const handlePanelEvent = (event: Event) => {
+      const customEvent = event as CustomEvent<{ open: boolean; title: string; id: string }>;
+      const detail = customEvent.detail;
+      if (!detail) {
+        return;
+      }
+      if (detail.open) {
+        setPanel({ title: detail.title, id: detail.id });
+        return;
+      }
+      setPanel(null);
+    };
+    window.addEventListener("m3d:panel", handlePanelEvent as EventListener);
+    return () => window.removeEventListener("m3d:panel", handlePanelEvent as EventListener);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -411,6 +446,11 @@ export default function Viewer() {
       }
       placeholderCleanupRef.current?.();
       placeholderCleanupRef.current = null;
+      const existingRouterCleanup = actionRouterCleanupRef.current as (() => void) | null;
+      if (existingRouterCleanup) {
+        existingRouterCleanup();
+      }
+      actionRouterCleanupRef.current = null;
       interactionEvents.forEach((eventName) => {
         eventTarget.removeEventListener(eventName, markInteraction);
       });
@@ -429,6 +469,7 @@ export default function Viewer() {
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
       <Hud engine={engineRef.current} scene={sceneRef.current} placeholderCount={placeholderCount} />
+      <Panels panel={panel} onClose={() => setPanel(null)} />
       <ZoomTestOverlay
         scene={sceneRef.current}
         camera={cameraRef.current}
