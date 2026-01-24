@@ -265,6 +265,16 @@ export function attachActionRouter(ctx: ActionCtx): () => void {
     const camera = ctx.scene.activeCamera ?? ctx.camera;
     switch (detail.prefix) {
       case "HS__":
+        handleHotspot(
+          ctx.scene,
+          camera,
+          detail.id,
+          detail.label,
+          detail.pickedNodeName,
+          detail.pickedMeshName,
+          detail.prefix
+        );
+        break;
       case "HOTSPOT__":
       case "HP__":
         handleHotspot(
