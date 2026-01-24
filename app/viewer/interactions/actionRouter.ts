@@ -147,6 +147,10 @@ export function attachActionRouter(ctx: ActionCtx): () => void {
   const unsubscribe = onPick((detail) => {
     const camera = ctx.scene.activeCamera ?? ctx.camera;
     switch (detail.prefix) {
+      case "HS__":
+      case "HOTSPOT__":
+        handleHotspot(detail.id);
+        break;
       case "HP__":
         handleHotspot(detail.id);
         break;

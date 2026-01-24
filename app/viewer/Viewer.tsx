@@ -85,6 +85,16 @@ export default function Viewer() {
   const [shareGlbParam, setShareGlbParam] = useState<string | null>(null);
   const [placeholderCount, setPlaceholderCount] = useState(0);
   const [panel, setPanel] = useState<{ title: string; id: string } | null>(null);
+  const [ventilatorOn, setVentilatorOn] = useState(false);
+  const [vitals, setVitals] = useState({
+    heartRate: 78,
+    spo2: 98,
+    respRate: 16,
+    systolic: 118,
+    diastolic: 76,
+    temperature: 36.8,
+    updatedAt: "just now"
+  });
 
   const shareUrl = useMemo(() => formatShareUrl(shareGlbParam), [shareGlbParam]);
 
@@ -124,10 +134,17 @@ export default function Viewer() {
     camera.setTarget(new Vector3(defaults.target[0], defaults.target[1], defaults.target[2]));
   }, []);
 
+  const clearSelection = useCallback(() => {
+    setPanel(null);
+    selectedHotspotRef.current = null;
+    highlightLayerRef.current?.removeAllMeshes();
+  }, []);
+
   const handleReset = useCallback(() => {
     resetCamera();
+    clearSelection();
     markInteraction();
-  }, [markInteraction, resetCamera]);
+  }, [clearSelection, markInteraction, resetCamera]);
 
   const reframeScene = useCallback(() => {
     const scene = sceneRef.current;
@@ -407,6 +424,31 @@ export default function Viewer() {
   }, []);
 
   useEffect(() => {
+    const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+    const tick = () => {
+      setVitals((prev) => {
+        const nextHeart = clamp(Math.round(prev.heartRate + (Math.random() * 4 - 2)), 68, 96);
+        const nextSpo2 = clamp(Math.round(prev.spo2 + (Math.random() * 2 - 1)), 94, 100);
+        const nextResp = clamp(Math.round(prev.respRate + (Math.random() * 2 - 1)), 12, 20);
+        const nextSys = clamp(Math.round(prev.systolic + (Math.random() * 4 - 2)), 110, 130);
+        const nextDia = clamp(Math.round(prev.diastolic + (Math.random() * 3 - 1.5)), 70, 85);
+        const nextTemp = clamp(Number((prev.temperature + (Math.random() * 0.2 - 0.1)).toFixed(1)), 36.4, 37.4);
+        return {
+          heartRate: nextHeart,
+          spo2: nextSpo2,
+          respRate: nextResp,
+          systolic: nextSys,
+          diastolic: nextDia,
+          temperature: nextTemp,
+          updatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        };
+      });
+    };
+    const interval = window.setInterval(tick, 2000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return undefined;
@@ -425,7 +467,11 @@ export default function Viewer() {
       camera,
       uiRef,
       highlightLayerRef,
-      selectedRef: selectedHotspotRef
+      selectedRef: selectedHotspotRef,
+      onDeselect: () => {
+        resetCamera();
+        clearSelection();
+      }
     });
 
     cameraDefaults.current = {
@@ -505,7 +551,13 @@ export default function Viewer() {
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
       <Hud engine={engineRef.current} scene={sceneRef.current} placeholderCount={placeholderCount} />
-      <Panels panel={panel} onClose={() => setPanel(null)} />
+      <Panels
+        panel={panel}
+        onClose={() => setPanel(null)}
+        ventilatorOn={ventilatorOn}
+        onVentilatorToggle={setVentilatorOn}
+        vitals={vitals}
+      />
       <ZoomTestOverlay
         scene={sceneRef.current}
         camera={cameraRef.current}
