@@ -50,7 +50,8 @@ const findPlaceholderAncestor = (node: Node | null): PlaceholderMatch | null => 
 
 const createPickSphere = (scene: Scene, node: TransformNode) => {
   const sphere = MeshBuilder.CreateSphere(`__pick__${node.name}`, { diameter: PICK_SPHERE_DIAMETER }, scene);
-  sphere.isVisible = false;
+  sphere.isVisible = true;
+  sphere.visibility = 0;
   sphere.isPickable = true;
   sphere.isNearPickable = true;
   sphere.parent = node;
