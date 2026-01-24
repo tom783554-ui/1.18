@@ -441,6 +441,7 @@ export function attachHotspotSystem({
 
     const selected = selectedRef.current;
     if (!selected) {
+      updateHudVisibility(false);
       hud.debug.text = `lastPointer: ${Math.round(lastPointer.x)}, ${Math.round(lastPointer.y)}\nlastPick: ${lastPick}\nselected: —`;
       return;
     }

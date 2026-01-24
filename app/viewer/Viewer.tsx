@@ -591,7 +591,7 @@ export default function Viewer() {
       <Hud engine={engineRef.current} scene={sceneRef.current} placeholderCount={placeholderCount} />
       <Panels
         panel={panel}
-        onClose={() => setPanel(null)}
+        onClose={clearSelection}
         ventilatorOn={ventilatorOn}
         onVentilatorToggle={setVentilatorOn}
         vitals={vitals}
