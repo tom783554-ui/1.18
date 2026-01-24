@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "seed:glb": "node scripts/seed-main-glb.js",
+    "postinstall": "node scripts/seed-main-glb.js"
   },
   "dependencies": {
     "@babylonjs/core": "6.45.0",
