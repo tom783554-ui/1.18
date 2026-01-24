@@ -11,6 +11,60 @@ export type LoadProgress = {
 export const DEFAULT_GLB_PATH = "/assets/main/main.glb";
 
 const LOAD_TIMEOUT_MS = 15000;
+const GLB_HEADER_BYTES = 20;
+const GLB_MAGIC = "glTF";
+const MIN_GLB_LENGTH = GLB_HEADER_BYTES;
+
+const isHttpLikeUrl = (value: string) => value.startsWith("/") || value.startsWith("http://") || value.startsWith("https://");
+
+const parseGlbHeader = (bytes: Uint8Array) => {
+  if (bytes.byteLength < GLB_HEADER_BYTES) {
+    throw new Error(`GLB is too small (${bytes.byteLength} bytes).`);
+  }
+
+  const magic = new TextDecoder().decode(bytes.slice(0, 4));
+  if (magic !== GLB_MAGIC) {
+    throw new Error(`GLB header magic mismatch: expected "${GLB_MAGIC}" but received "${magic || "<empty>"}".`);
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const version = view.getUint32(4, true);
+  const length = view.getUint32(8, true);
+
+  if (version !== 2) {
+    throw new Error(`Unsupported GLB version: ${version}.`);
+  }
+  if (length < MIN_GLB_LENGTH) {
+    throw new Error(`GLB declared length ${length} bytes is invalid.`);
+  }
+};
+
+const readHeaderBytes = async (url: string) => {
+  const response = await fetch(url, {
+    headers: { Range: `bytes=0-${GLB_HEADER_BYTES - 1}` }
+  });
+
+  if (!response.ok && response.status !== 206) {
+    throw new Error(`Preflight request failed with status ${response.status}.`);
+  }
+
+  const buffer = await response.arrayBuffer();
+  return new Uint8Array(buffer);
+};
+
+const validateGlbUrl = async (url: string) => {
+  if (!isHttpLikeUrl(url) || url.startsWith("blob:") || url.startsWith("data:")) {
+    return;
+  }
+
+  try {
+    const bytes = await readHeaderBytes(url);
+    parseGlbHeader(bytes);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`GLB validation failed for ${url}: ${message}`);
+  }
+};
 
 const splitUrl = (u: string): { rootUrl: string; file: string } => {
   const i = u.lastIndexOf("/");
@@ -41,6 +95,7 @@ export const loadMainGlb = async (
   onProgress?: (update: LoadProgress) => void
 ) => {
   try {
+    await validateGlbUrl(url);
     const { rootUrl, file } = splitUrl(url);
     await withTimeout(
       (async () => {
