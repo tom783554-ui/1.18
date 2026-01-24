@@ -2,10 +2,7 @@ import {
   AbstractMesh,
   ArcRotateCamera,
   Camera,
-  Color3,
-  MeshBuilder,
   Scene,
-  StandardMaterial,
   TransformNode,
   Vector3,
   Animation,
@@ -13,6 +10,9 @@ import {
   EasingFunction
 } from "@babylonjs/core";
 import { onPick } from "./m3dEvents";
+import { emitScenarioAction } from "../scenario/m3dScenarioActionEvents";
+import { emitSocketToggle } from "./socketEvents";
+import { getBindingsForPick } from "./hotspotActionMap";
 
 export type ActionCtx = { scene: Scene; camera: ArcRotateCamera | Camera | null };
 
@@ -234,30 +234,6 @@ const handleCameraSpawn = (camera: ArcRotateCamera | Camera | null, defaults: Ar
   setCameraTarget(camera, defaults.target.clone());
 };
 
-const handleSocketToggle = (scene: Scene, id: string) => {
-  const socketName = `SOCKET__${id}`;
-  const socketNode = resolveNode(scene, socketName);
-  if (!socketNode) {
-    return;
-  }
-
-  const attachedName = `__ATTACHED__${id}`;
-  const existing = scene.getMeshByName(attachedName);
-  if (existing) {
-    existing.dispose(false, true);
-    return;
-  }
-
-  const attached = MeshBuilder.CreateBox(attachedName, { size: 0.18 }, scene);
-  attached.parent = socketNode;
-  attached.position = new Vector3(0, 0.12, 0);
-
-  const material = new StandardMaterial(`__ATTACHED__MAT__${id}`, scene);
-  material.diffuseColor = new Color3(0.2, 0.8, 1.0);
-  material.emissiveColor = new Color3(0.05, 0.2, 0.25);
-  attached.material = material;
-};
-
 export function attachActionRouter(ctx: ActionCtx): () => void {
   const defaults = captureArcDefaults(ctx.camera);
 
@@ -276,6 +252,16 @@ export function attachActionRouter(ctx: ActionCtx): () => void {
           detail.pickedMeshName,
           detail.prefix
         );
+        {
+          const bindings = getBindingsForPick(detail);
+          bindings.scenarioActions.forEach((a) => emitScenarioAction(a));
+          if (bindings.socketToggle) {
+            emitSocketToggle({
+              socketId: bindings.socketToggle.socketId,
+              assetKey: bindings.socketToggle.assetKey
+            });
+          }
+        }
         break;
       case "NAV__":
         if (detail.id === "door") {
@@ -288,7 +274,7 @@ export function attachActionRouter(ctx: ActionCtx): () => void {
         }
         break;
       case "SOCKET__":
-        handleSocketToggle(ctx.scene, detail.id);
+        emitSocketToggle({ socketId: detail.id, assetKey: detail.id });
         break;
       default:
         break;

@@ -15,8 +15,10 @@ import type { AdvancedDynamicTexture } from "@babylonjs/gui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEngine } from "./engine/createEngine";
 import { attachHotspotSystem, type HotspotEntry } from "./interactions/hotspotSystem";
+import { createSocketManager } from "./interactions/socketManager";
 import { configureCamera, createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
+import { createScenarioEngine } from "./scenario/scenarioEngine";
 import { getM3dDebugState, setM3dReady } from "./utils/m3dDebug";
 import Hud from "./ui/Hud";
 import LoadingOverlay from "./ui/LoadingOverlay";
@@ -66,6 +68,8 @@ export default function Viewer() {
   const highlightLayerRef = useRef<HighlightLayer | null>(null);
   const selectedHotspotRef = useRef<HotspotEntry | null>(null);
   const hotspotSystemRef = useRef<ReturnType<typeof attachHotspotSystem> | null>(null);
+  const socketManagerRef = useRef<ReturnType<typeof createSocketManager> | null>(null);
+  const scenarioEngineRef = useRef<ReturnType<typeof createScenarioEngine> | null>(null);
   const cameraDefaults = useRef<{ alpha: number; beta: number; radius: number; target: [number, number, number] } | null>(
     null
   );
@@ -381,6 +385,7 @@ export default function Viewer() {
           camera: scene.activeCamera
         }) as () => void;
         hotspotSystemRef.current?.refresh();
+        socketManagerRef.current?.refresh();
         setShareGlbParam(isDefault ? null : shareParam ?? null);
         setIsLoading(false);
         flashReady();
@@ -500,6 +505,9 @@ export default function Viewer() {
     sceneRef.current = scene;
     cameraRef.current = camera;
 
+    scenarioEngineRef.current = createScenarioEngine();
+    socketManagerRef.current = createSocketManager(scene);
+
     hotspotSystemRef.current = attachHotspotSystem({
       scene,
       camera,
@@ -578,6 +586,10 @@ export default function Viewer() {
       }
       hotspotSystemRef.current?.dispose();
       hotspotSystemRef.current = null;
+      socketManagerRef.current?.dispose();
+      socketManagerRef.current = null;
+      scenarioEngineRef.current?.dispose();
+      scenarioEngineRef.current = null;
       cleanupScalingRef.current?.();
       engine.stopRenderLoop();
       scene.dispose();
