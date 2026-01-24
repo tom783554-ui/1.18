@@ -23,22 +23,7 @@ type ArcDefaults = {
   target: Vector3;
 };
 
-const PANEL_EVENT = "m3d:panel" as const;
-
-const PANEL_TITLES: Record<string, string> = {
-  monitor: "Monitor",
-  ventilator: "Ventilator",
-  bed: "Bed"
-};
-
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-
-const emitPanel = (title: string, id: string) => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: true, title, id } }));
-};
 
 const resolveNode = (scene: Scene, name: string): TransformNode | AbstractMesh | null => {
   return scene.getTransformNodeByName(name) ?? scene.getMeshByName(name);
@@ -180,8 +165,6 @@ const handleHotspot = (
   if (node) {
     focusCamera(scene, camera, getNodePosition(node).clone());
   }
-  const title = label ?? PANEL_TITLES[id] ?? "Hotspot";
-  emitPanel(title, id);
 };
 
 const handleNavDoor = (scene: Scene, camera: ArcRotateCamera | Camera | null) => {

@@ -192,24 +192,24 @@ export default function Hud({ engine, scene, placeholderCount }: HudProps) {
           background: rgba(12, 16, 24, 0.78);
           border: 1px solid rgba(148, 163, 184, 0.2);
           border-radius: 10px;
-          padding: 10px 12px;
+          padding: 8px 10px;
           color: #f8fafc;
-          min-width: 240px;
+          min-width: 190px;
           pointer-events: none;
         }
         .vitals-title {
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 600;
           text-transform: uppercase;
           letter-spacing: 0.08em;
           color: #cbd5f5;
-          margin-bottom: 8px;
+          margin-bottom: 6px;
         }
         .vitals-grid {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 8px 16px;
-          font-size: 12px;
+          gap: 6px 12px;
+          font-size: 11px;
         }
         .vital {
           display: grid;
@@ -222,11 +222,11 @@ export default function Hud({ engine, scene, placeholderCount }: HudProps) {
           letter-spacing: 0.06em;
         }
         .vital strong {
-          font-size: 14px;
+          font-size: 12px;
         }
         .vital em {
           font-style: normal;
-          font-size: 10px;
+          font-size: 9px;
           color: #94a3b8;
         }
         @media (max-width: 600px) {
