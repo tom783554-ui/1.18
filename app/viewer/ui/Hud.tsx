@@ -2,18 +2,23 @@
 
 import { useEffect, useState } from "react";
 import type { Engine, Scene } from "@babylonjs/core";
+import { onPick, type M3DPickDetail } from "../interactions/m3dEvents";
 
 type HudProps = {
   engine: Engine | null;
   scene: Scene | null;
+  placeholderCount?: number;
 };
 
 const updateIntervalMs = 400;
 
-export default function Hud({ engine, scene }: HudProps) {
+export default function Hud({ engine, scene, placeholderCount }: HudProps) {
   const [fps, setFps] = useState(0);
   const [meshes, setMeshes] = useState(0);
   const [triangles, setTriangles] = useState(0);
+  const [lastPick, setLastPick] = useState<M3DPickDetail | null>(null);
+
+  useEffect(() => onPick((detail) => setLastPick(detail)), []);
 
   useEffect(() => {
     if (!engine || !scene) {
@@ -37,6 +42,8 @@ export default function Hud({ engine, scene }: HudProps) {
       <div>FPS: {fps}</div>
       <div>Meshes: {meshes}</div>
       <div>Triangles: {triangles}</div>
+      <div>Placeholders: {placeholderCount ?? 0}</div>
+      <div>Last: {lastPick ? `${lastPick.prefix}${lastPick.id}` : "—"}</div>
       <style jsx>{`
         .hud {
           position: absolute;

@@ -63,6 +63,7 @@ export default function Viewer() {
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const cleanupScalingRef = useRef<(() => void) | undefined>();
+  const placeholderCleanupRef = useRef<(() => void) | null>(null);
   const isNormalizedRef = useRef(false);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -72,6 +73,7 @@ export default function Viewer() {
   const [missingMainDetails, setMissingMainDetails] = useState<string | null>(null);
   const [error, setError] = useState<{ title: string; details?: string } | null>(null);
   const [shareGlbParam, setShareGlbParam] = useState<string | null>(null);
+  const [placeholderCount, setPlaceholderCount] = useState(0);
 
   const shareUrl = useMemo(() => formatShareUrl(shareGlbParam), [shareGlbParam]);
 
@@ -301,6 +303,10 @@ export default function Viewer() {
       setError(null);
       setProgress(null);
 
+      placeholderCleanupRef.current?.();
+      placeholderCleanupRef.current = null;
+      setPlaceholderCount(0);
+
       scene.meshes.slice().forEach((mesh) => {
         if (mesh.name !== "camera" && mesh.name !== "hemi") {
           mesh.dispose(false, true);
@@ -310,6 +316,10 @@ export default function Viewer() {
       try {
         await loadMainGlb(scene, url, (update) => setProgress({ ...update }));
         await scene.whenReadyAsync();
+        const { wirePlaceholders } = await import("./interactions/placeholders");
+        const wired = wirePlaceholders(scene);
+        placeholderCleanupRef.current = wired.dispose;
+        setPlaceholderCount(wired.count);
         normalizeScene();
         reframeScene();
         setShareGlbParam(isDefault ? null : shareParam ?? null);
@@ -329,7 +339,7 @@ export default function Viewer() {
         setIsLoading(false);
       }
     },
-    [armIdleFreeze, reframeScene]
+    [armIdleFreeze, normalizeScene, reframeScene]
   );
 
   const handleFilePick = useCallback(
@@ -399,6 +409,8 @@ export default function Viewer() {
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
       }
+      placeholderCleanupRef.current?.();
+      placeholderCleanupRef.current = null;
       interactionEvents.forEach((eventName) => {
         eventTarget.removeEventListener(eventName, markInteraction);
       });
@@ -416,7 +428,7 @@ export default function Viewer() {
   return (
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
-      <Hud engine={engineRef.current} scene={sceneRef.current} />
+      <Hud engine={engineRef.current} scene={sceneRef.current} placeholderCount={placeholderCount} />
       <ZoomTestOverlay
         scene={sceneRef.current}
         camera={cameraRef.current}
