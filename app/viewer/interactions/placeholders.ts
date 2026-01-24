@@ -1,6 +1,5 @@
 import {
   Color3,
-  HighlightLayer,
   Mesh,
   MeshBuilder,
   Node,
@@ -13,7 +12,8 @@ import { emitPick } from "./m3dEvents";
 
 const PLACEHOLDER_PREFIXES = ["HP__", "SOCKET__", "NAV__", "CAM__", "COLLIDER__", "UI__"] as const;
 const PICK_SPHERE_DIAMETER = 0.25;
-const HIGHLIGHT_MS = 250;
+const OUTLINE_FLASH_MS = 160;
+const OUTLINE_WIDTH = 0.06;
 
 type PlaceholderPrefixMatch = {
   prefix: string;
@@ -59,9 +59,43 @@ const createPickSphere = (scene: Scene, node: TransformNode) => {
   return sphere;
 };
 
+const findVisibleMesh = (mesh: Mesh): Mesh => {
+  let current: Node | null = mesh;
+  while (current) {
+    if (current instanceof Mesh && current.isVisible !== false) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return mesh;
+};
+
+const flashOutline = (mesh: Mesh, isDisposed?: () => boolean) => {
+  const targetMesh = findVisibleMesh(mesh);
+  const prev = {
+    renderOutline: targetMesh.renderOutline,
+    outlineWidth: targetMesh.outlineWidth,
+    outlineColor: targetMesh.outlineColor.clone()
+  };
+
+  targetMesh.renderOutline = true;
+  targetMesh.outlineWidth = OUTLINE_WIDTH;
+  targetMesh.outlineColor = Color3.White();
+
+  window.setTimeout(() => {
+    if (isDisposed?.()) {
+      return;
+    }
+    targetMesh.renderOutline = prev.renderOutline;
+    targetMesh.outlineWidth = prev.outlineWidth;
+    targetMesh.outlineColor = prev.outlineColor;
+  }, OUTLINE_FLASH_MS);
+};
+
 export function wirePlaceholders(scene: Scene): { count: number; dispose: () => void } {
   const pickSpheres: Mesh[] = [];
   const placeholderNames = new Set<string>();
+  let disposed = false;
 
   for (const mesh of scene.meshes) {
     mesh.isPickable = true;
@@ -95,18 +129,6 @@ export function wirePlaceholders(scene: Scene): { count: number; dispose: () => 
   const placeholderList = Array.from(placeholderNames).sort();
   console.log("PLACEHOLDERS:", placeholderList);
 
-  const highlightLayer = new HighlightLayer("m3d-placeholder-highlight", scene);
-  let disposed = false;
-
-  const highlightMesh = (mesh: Mesh) => {
-    highlightLayer.addMesh(mesh, Color3.White());
-    window.setTimeout(() => {
-      if (!disposed) {
-        highlightLayer.removeMesh(mesh);
-      }
-    }, HIGHLIGHT_MS);
-  };
-
   const observer = scene.onPointerObservable.add((pointerInfo) => {
     if (pointerInfo.type !== PointerEventTypes.POINTERPICK) {
       return;
@@ -123,10 +145,8 @@ export function wirePlaceholders(scene: Scene): { count: number; dispose: () => 
     }
 
     const id = match.name.slice(match.prefix.length);
-    if (match.node instanceof Mesh) {
-      highlightMesh(match.node);
-    } else if (pickedMesh instanceof Mesh) {
-      highlightMesh(pickedMesh);
+    if (pickedMesh instanceof Mesh) {
+      flashOutline(pickedMesh, () => disposed);
     }
 
     emitPick({
@@ -143,7 +163,6 @@ export function wirePlaceholders(scene: Scene): { count: number; dispose: () => 
       scene.onPointerObservable.remove(observer);
     }
     disposed = true;
-    highlightLayer.dispose();
     pickSpheres.forEach((sphere) => sphere.dispose(false, true));
   };
 
