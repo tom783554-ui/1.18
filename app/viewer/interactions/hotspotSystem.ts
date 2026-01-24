@@ -22,6 +22,8 @@ import {
 import { emitPick } from "./m3dEvents";
 import { setM3dPick } from "../utils/m3dDebug";
 
+const PANEL_EVENT = "m3d:panel" as const;
+
 export type HotspotEntry = {
   prefix: string;
   id: string;
@@ -348,10 +350,18 @@ export function attachHotspotSystem({
     hud.panel.isVisible = visible;
   };
 
+  const closePanel = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: false, title: "", id: "" } }));
+  };
+
   const deselect = () => {
     selectedRef.current = null;
     highlightLayer.removeAllMeshes();
     updateHudVisibility(false);
+    closePanel();
   };
 
   const selectHotspot = (entry: HotspotEntry, pickedMesh?: AbstractMesh | null) => {
@@ -468,20 +478,21 @@ export function attachHotspotSystem({
     }
 
     lastPointer = { x: scene.pointerX, y: scene.pointerY };
-    const pick = scene.pick(scene.pointerX, scene.pointerY, isHotspotMesh);
-    lastPick = pick?.pickedMesh?.name ?? "none";
+    const pickInfo = pointerInfo.pickInfo ?? null;
+    const pickedMesh = pickInfo?.pickedMesh ?? null;
+    lastPick = pickedMesh?.name ?? "none";
 
-    if (pick?.hit && pick.pickedMesh) {
-      const entry = resolveHotspotFromMesh(pick.pickedMesh);
+    if (pickInfo?.hit && pickedMesh && isHotspotMesh(pickedMesh)) {
+      const entry = resolveHotspotFromMesh(pickedMesh);
       if (entry) {
-        selectHotspot(entry, pick.pickedMesh);
+        selectHotspot(entry, pickedMesh);
         // Avoid duplicating HP__/SOCKET__/NAV__/CAM picks which are already emitted by placeholders.ts.
         if (entry.prefix === "HS__" || entry.prefix === "HOTSPOT__") {
           emitPick({
             prefix: entry.prefix,
             id: entry.id,
             name: entry.label,
-            pickedMeshName: pick.pickedMesh.name,
+            pickedMeshName: pickedMesh.name,
             time: Date.now()
           });
         }
