@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: pm
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+            echo "install_cmd=pnpm install --frozen-lockfile" >> "$GITHUB_OUTPUT"
+            echo "preflight_cmd=pnpm run preflight" >> "$GITHUB_OUTPUT"
+          elif [ -f yarn.lock ]; then
+            echo "manager=yarn" >> "$GITHUB_OUTPUT"
+            echo "install_cmd=yarn install --frozen-lockfile" >> "$GITHUB_OUTPUT"
+            echo "preflight_cmd=yarn preflight" >> "$GITHUB_OUTPUT"
+          else
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+            echo "install_cmd=npm ci" >> "$GITHUB_OUTPUT"
+            echo "preflight_cmd=npm run preflight" >> "$GITHUB_OUTPUT"
+          fi
+      - id: node
+        run: |
+          if [ -f .nvmrc ]; then
+            echo "node_version_file=.nvmrc" >> "$GITHUB_OUTPUT"
+          elif [ -f .node-version ]; then
+            echo "node_version_file=.node-version" >> "$GITHUB_OUTPUT"
+          else
+            echo "node_version=20" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.node.outputs.node_version_file != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ steps.node.outputs.node_version_file }}
+          cache: ${{ steps.pm.outputs.manager }}
+      - if: steps.node.outputs.node_version_file == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.node.outputs.node_version }}
+          cache: ${{ steps.pm.outputs.manager }}
+      - name: Install dependencies
+        run: ${{ steps.pm.outputs.install_cmd }}
+      - name: Run preflight
+        run: ${{ steps.pm.outputs.preflight_cmd }}
