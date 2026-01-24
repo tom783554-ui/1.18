@@ -4,6 +4,7 @@ import {
   Color3,
   HighlightLayer,
   Matrix,
+  Mesh,
   MeshBuilder,
   PointerEventTypes,
   Scene,
@@ -114,6 +115,17 @@ const createPickCollider = (
     __hotspotCollider: true
   };
   return collider;
+};
+
+const resolveHighlightMesh = (mesh: AbstractMesh): Mesh | null => {
+  if (mesh instanceof Mesh) {
+    return mesh;
+  }
+  const maybeSource = (mesh as { sourceMesh?: Mesh }).sourceMesh;
+  if (maybeSource instanceof Mesh) {
+    return maybeSource;
+  }
+  return null;
 };
 
 const shouldTreatAsHotspot = (node: TransformNode | AbstractMesh) => {
@@ -332,7 +344,10 @@ export function attachHotspotSystem({
   const selectHotspot = (entry: HotspotEntry, pickedMesh?: AbstractMesh | null) => {
     selectedRef.current = entry;
     highlightLayer.removeAllMeshes();
-    highlightLayer.addMesh(pickedMesh ?? entry.pickMesh, Color3.White());
+    const highlightMesh = resolveHighlightMesh(pickedMesh ?? entry.pickMesh);
+    if (highlightMesh) {
+      highlightLayer.addMesh(highlightMesh, Color3.White());
+    }
     hud.title.text = entry.label || entry.id;
     updateHudVisibility(true);
   };
