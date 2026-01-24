@@ -1,5 +1,5 @@
 import {
-  Color3,
+  AbstractMesh,
   Mesh,
   MeshBuilder,
   Node,
@@ -12,8 +12,6 @@ import { emitPick } from "./m3dEvents";
 
 const PLACEHOLDER_PREFIXES = ["HP__", "SOCKET__", "NAV__", "CAM__", "COLLIDER__", "UI__"] as const;
 const PICK_SPHERE_DIAMETER = 0.25;
-const OUTLINE_FLASH_MS = 160;
-const OUTLINE_WIDTH = 0.06;
 
 type PlaceholderPrefixMatch = {
   prefix: string;
@@ -22,6 +20,11 @@ type PlaceholderPrefixMatch = {
 
 type PlaceholderMatch = PlaceholderPrefixMatch & {
   node: Node;
+};
+
+type PlaceholderPickProxyMetadata = {
+  isPlaceholderPickProxy?: boolean;
+  placeholderTarget?: TransformNode;
 };
 
 const matchPrefix = (name: string): PlaceholderPrefixMatch | null => {
@@ -52,58 +55,56 @@ const createPickSphere = (scene: Scene, node: TransformNode) => {
   sphere.isNearPickable = true;
   sphere.parent = node;
   sphere.position = Vector3.Zero();
-  sphere.metadata = {
-    ...(sphere.metadata ?? {}),
-    isPlaceholderPickProxy: true
+  const metadata: PlaceholderPickProxyMetadata = {
+    ...(sphere.metadata as PlaceholderPickProxyMetadata | null),
+    isPlaceholderPickProxy: true,
+    placeholderTarget: node
   };
+  sphere.metadata = metadata;
   return sphere;
 };
 
-const findVisibleMesh = (mesh: Mesh): Mesh => {
-  let current: Node | null = mesh;
-  while (current) {
-    if (current instanceof Mesh && current.isVisible !== false) {
-      return current;
+const setAbstractMeshPickable = (mesh: AbstractMesh) => {
+  mesh.isPickable = true;
+  mesh.isNearPickable = true;
+  if (mesh instanceof Mesh) {
+    for (const child of mesh.getChildMeshes()) {
+      child.isPickable = true;
+      child.isNearPickable = true;
     }
-    current = current.parent;
   }
-  return mesh;
 };
 
-const flashOutline = (mesh: Mesh, isDisposed?: () => boolean) => {
-  const targetMesh = findVisibleMesh(mesh);
-  const prev = {
-    renderOutline: targetMesh.renderOutline,
-    outlineWidth: targetMesh.outlineWidth,
-    outlineColor: targetMesh.outlineColor.clone()
-  };
-
-  targetMesh.renderOutline = true;
-  targetMesh.outlineWidth = OUTLINE_WIDTH;
-  targetMesh.outlineColor = Color3.White();
-
-  window.setTimeout(() => {
-    if (isDisposed?.()) {
-      return;
+const resolvePickedTarget = (pickedMesh: Mesh): Node => {
+  const metadata = pickedMesh.metadata as PlaceholderPickProxyMetadata | null;
+  if (metadata?.isPlaceholderPickProxy) {
+    const proxyTarget = metadata.placeholderTarget;
+    if (proxyTarget) {
+      return proxyTarget;
     }
-    targetMesh.renderOutline = prev.renderOutline;
-    targetMesh.outlineWidth = prev.outlineWidth;
-    targetMesh.outlineColor = prev.outlineColor;
-  }, OUTLINE_FLASH_MS);
+    if (pickedMesh.parent) {
+      return pickedMesh.parent;
+    }
+  }
+  return pickedMesh;
 };
 
 export function wirePlaceholders(scene: Scene): { count: number; dispose: () => void } {
   const pickSpheres: Mesh[] = [];
   const placeholderNames = new Set<string>();
-  let disposed = false;
 
   for (const mesh of scene.meshes) {
-    mesh.isPickable = true;
-    mesh.isNearPickable = true;
+    mesh.isPickable = false;
+    mesh.isNearPickable = false;
+  }
+
+  for (const mesh of scene.meshes) {
     const match = matchPrefix(mesh.name);
-    if (match && mesh instanceof Mesh) {
-      placeholderNames.add(match.name);
+    if (!match) {
+      continue;
     }
+    placeholderNames.add(match.name);
+    setAbstractMeshPickable(mesh);
   }
 
   for (const node of scene.transformNodes) {
@@ -113,17 +114,11 @@ export function wirePlaceholders(scene: Scene): { count: number; dispose: () => 
     }
     placeholderNames.add(match.name);
     if (node instanceof Mesh) {
-      node.isPickable = true;
-      node.isNearPickable = true;
+      setAbstractMeshPickable(node);
       continue;
     }
     const sphere = createPickSphere(scene, node);
     pickSpheres.push(sphere);
-  }
-
-  for (const sphere of pickSpheres) {
-    sphere.isPickable = true;
-    sphere.isNearPickable = true;
   }
 
   const placeholderList = Array.from(placeholderNames).sort();
@@ -135,19 +130,17 @@ export function wirePlaceholders(scene: Scene): { count: number; dispose: () => 
     }
 
     const pickedMesh = pointerInfo.pickInfo?.pickedMesh ?? null;
-    if (!pickedMesh) {
+    if (!pickedMesh || !(pickedMesh instanceof Mesh)) {
       return;
     }
 
-    const match = findPlaceholderAncestor(pickedMesh);
+    const targetNode = resolvePickedTarget(pickedMesh);
+    const match = findPlaceholderAncestor(targetNode);
     if (!match) {
       return;
     }
 
     const id = match.name.slice(match.prefix.length);
-    if (pickedMesh instanceof Mesh) {
-      flashOutline(pickedMesh, () => disposed);
-    }
 
     emitPick({
       prefix: match.prefix,
@@ -162,7 +155,6 @@ export function wirePlaceholders(scene: Scene): { count: number; dispose: () => 
     if (observer) {
       scene.onPointerObservable.remove(observer);
     }
-    disposed = true;
     pickSpheres.forEach((sphere) => sphere.dispose(false, true));
   };
 
