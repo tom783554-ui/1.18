@@ -7,11 +7,14 @@ import {
   type AbstractMesh,
   type ArcRotateCamera,
   type Engine,
+  type HighlightLayer,
   type Scene,
   Vector3
 } from "@babylonjs/core";
+import type { AdvancedDynamicTexture } from "@babylonjs/gui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEngine } from "./engine/createEngine";
+import { attachHotspotSystem, type HotspotEntry } from "./interactions/hotspotSystem";
 import { configureCamera, createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import Hud from "./ui/Hud";
@@ -58,6 +61,10 @@ export default function Viewer() {
   const engineRef = useRef<Engine | null>(null);
   const sceneRef = useRef<Scene | null>(null);
   const cameraRef = useRef<ArcRotateCamera | null>(null);
+  const uiRef = useRef<AdvancedDynamicTexture | null>(null);
+  const highlightLayerRef = useRef<HighlightLayer | null>(null);
+  const selectedHotspotRef = useRef<HotspotEntry | null>(null);
+  const hotspotSystemRef = useRef<ReturnType<typeof attachHotspotSystem> | null>(null);
   const cameraDefaults = useRef<{ alpha: number; beta: number; radius: number; target: [number, number, number] } | null>(
     null
   );
@@ -67,6 +74,7 @@ export default function Viewer() {
   const placeholderCleanupRef = useRef<(() => void) | null>(null);
   const actionRouterCleanupRef = useRef<(() => void) | null>(null);
   const isNormalizedRef = useRef(false);
+  const resizeRafRef = useRef<number | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [progress, setProgress] = useState<LoadProgress | null>(null);
@@ -315,10 +323,17 @@ export default function Viewer() {
       actionRouterCleanupRef.current = null;
       setPlaceholderCount(0);
       setPanel(null);
+      selectedHotspotRef.current = null;
+      highlightLayerRef.current?.removeAllMeshes();
 
       scene.meshes.slice().forEach((mesh) => {
         if (mesh.name !== "camera" && mesh.name !== "hemi") {
           mesh.dispose(false, true);
+        }
+      });
+      scene.transformNodes.slice().forEach((node) => {
+        if (node.name !== "camera" && node.name !== "hemi") {
+          node.dispose(false, true);
         }
       });
 
@@ -340,6 +355,7 @@ export default function Viewer() {
           scene,
           camera: scene.activeCamera
         }) as () => void;
+        hotspotSystemRef.current?.refresh();
         setShareGlbParam(isDefault ? null : shareParam ?? null);
         setIsLoading(false);
         flashReady();
@@ -404,6 +420,14 @@ export default function Viewer() {
     sceneRef.current = scene;
     cameraRef.current = camera;
 
+    hotspotSystemRef.current = attachHotspotSystem({
+      scene,
+      camera,
+      uiRef,
+      highlightLayerRef,
+      selectedRef: selectedHotspotRef
+    });
+
     cameraDefaults.current = {
       alpha: camera.alpha,
       beta: camera.beta,
@@ -416,7 +440,13 @@ export default function Viewer() {
     });
 
     const handleResize = () => {
-      engine.resize();
+      if (resizeRafRef.current !== null) {
+        return;
+      }
+      resizeRafRef.current = window.requestAnimationFrame(() => {
+        engine.resize();
+        resizeRafRef.current = null;
+      });
     };
 
     const eventTarget: EventTarget = canvas;
@@ -458,6 +488,12 @@ export default function Viewer() {
       canvas.removeEventListener("touchmove", preventScroll);
       canvas.removeEventListener("touchend", preventScroll);
       window.removeEventListener("resize", handleResize);
+      if (resizeRafRef.current !== null) {
+        window.cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
+      hotspotSystemRef.current?.dispose();
+      hotspotSystemRef.current = null;
       cleanupScalingRef.current?.();
       engine.stopRenderLoop();
       scene.dispose();
