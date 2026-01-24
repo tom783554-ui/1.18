@@ -1,3 +1,6 @@
+import { onScenarioAction } from "./m3dScenarioActionEvents";
+import type { ScenarioAction, VentMode } from "./types";
+
 export type ScenarioVitals = {
   hr: number;
   bpSys: number;
@@ -100,3 +103,58 @@ export const onScenarioVitals = (handler: (vitals: ScenarioVitals) => void) => {
     }
   };
 };
+
+type ScenarioState = {
+  mode: VentMode | null;
+  fio2: number;
+  peep: number;
+  notes: string[];
+};
+
+export function createScenarioEngine() {
+  let currentState: ScenarioState = {
+    mode: null,
+    fio2: 0.21,
+    peep: 5,
+    notes: []
+  };
+
+  const dispatch = (action: ScenarioAction) => {
+    switch (action.type) {
+      case "NOTE": {
+        currentState = { ...currentState, notes: [...currentState.notes, action.message] };
+        console.info(`[Scenario] NOTE: ${action.message}`);
+        break;
+      }
+      case "SET_FIO2": {
+        const fio2 = clamp(action.fio2, 0.21, 1.0);
+        currentState = { ...currentState, fio2 };
+        console.info(`[Scenario] FiO2 -> ${Math.round(fio2 * 100)}%`);
+        break;
+      }
+      case "SET_PEEP": {
+        const peep = clamp(Math.round(action.peep), 0, 20);
+        currentState = { ...currentState, peep };
+        console.info(`[Scenario] PEEP -> ${peep}`);
+        break;
+      }
+      case "SET_MODE": {
+        currentState = { ...currentState, mode: action.mode };
+        console.info(`[Scenario] Mode -> ${action.mode}`);
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
+  const offActions = onScenarioAction((action) => dispatch(action));
+
+  return {
+    dispatch,
+    getState: () => ({ ...currentState, notes: [...currentState.notes] }),
+    dispose: () => {
+      offActions();
+    }
+  };
+}
