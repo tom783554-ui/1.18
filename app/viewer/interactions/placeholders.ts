@@ -141,13 +141,23 @@ export function wirePlaceholders(scene: Scene): { count: number; dispose: () => 
       return;
     }
 
-    const id = match.name.slice(match.prefix.length);
+    const rest = match.name.slice(match.prefix.length);
+    const parts = rest.split("__");
+    const id = (parts[0] ?? "").trim();
+    const label = (parts[1] ?? "").trim() || id;
+
+    if (!id) {
+      console.warn("BAD_PLACEHOLDER_NAME (missing id):", match.name);
+      return;
+    }
 
     emitPick({
       prefix: match.prefix,
       id,
       name: match.name,
+      label,
       pickedMeshName: pickedMesh.name,
+      pickedNodeName: match.node.name,
       time: Date.now()
     });
   });

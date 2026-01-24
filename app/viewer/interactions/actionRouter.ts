@@ -7,7 +7,10 @@ import {
   Scene,
   StandardMaterial,
   TransformNode,
-  Vector3
+  Vector3,
+  Animation,
+  CubicEase,
+  EasingFunction
 } from "@babylonjs/core";
 import { onPick } from "./m3dEvents";
 
@@ -62,8 +65,122 @@ const setCameraTarget = (camera: Camera | null, target: Vector3) => {
   }
 };
 
-const handleHotspot = (id: string) => {
-  const title = PANEL_TITLES[id] ?? "Hotspot";
+const focusCamera = (scene: Scene, camera: ArcRotateCamera | Camera | null, target: Vector3) => {
+  if (!camera) {
+    return;
+  }
+
+  if (camera instanceof ArcRotateCamera) {
+    const cam = camera;
+
+    const endTarget = target.clone();
+    const endRadius = clamp(Vector3.Distance(cam.position, endTarget), 2.8, 7.5);
+    const endAlpha = cam.alpha;
+    const endBeta = clamp(cam.beta, 0.55, 1.25);
+
+    const fps = 60;
+    const frames = 18;
+
+    const ease = new CubicEase();
+    ease.setEasingMode(EasingFunction.EASINGMODE_EASEINOUT);
+
+    const animTarget = new Animation(
+      "focus_target",
+      "target",
+      fps,
+      Animation.ANIMATIONTYPE_VECTOR3,
+      Animation.ANIMATIONLOOPMODE_CONSTANT
+    );
+    animTarget.setKeys([
+      { frame: 0, value: cam.target.clone() },
+      { frame: frames, value: endTarget }
+    ]);
+    animTarget.setEasingFunction(ease);
+
+    const animRadius = new Animation(
+      "focus_radius",
+      "radius",
+      fps,
+      Animation.ANIMATIONTYPE_FLOAT,
+      Animation.ANIMATIONLOOPMODE_CONSTANT
+    );
+    animRadius.setKeys([
+      { frame: 0, value: cam.radius },
+      { frame: frames, value: endRadius }
+    ]);
+    animRadius.setEasingFunction(ease);
+
+    const animAlpha = new Animation(
+      "focus_alpha",
+      "alpha",
+      fps,
+      Animation.ANIMATIONTYPE_FLOAT,
+      Animation.ANIMATIONLOOPMODE_CONSTANT
+    );
+    animAlpha.setKeys([
+      { frame: 0, value: cam.alpha },
+      { frame: frames, value: endAlpha }
+    ]);
+    animAlpha.setEasingFunction(ease);
+
+    const animBeta = new Animation(
+      "focus_beta",
+      "beta",
+      fps,
+      Animation.ANIMATIONTYPE_FLOAT,
+      Animation.ANIMATIONLOOPMODE_CONSTANT
+    );
+    animBeta.setKeys([
+      { frame: 0, value: cam.beta },
+      { frame: frames, value: endBeta }
+    ]);
+    animBeta.setEasingFunction(ease);
+
+    scene.stopAnimation(cam);
+    scene.beginDirectAnimation(cam, [animTarget, animRadius, animAlpha, animBeta], 0, frames, false, 1.0);
+    return;
+  }
+
+  setCameraTarget(camera, target);
+};
+
+const resolvePickTargetNode = (
+  scene: Scene,
+  detail: { pickedNodeName?: string; pickedMeshName?: string; prefix: string; id: string; label?: string }
+) => {
+  const candidates: Array<string | undefined> = [
+    detail.pickedNodeName,
+    detail.pickedMeshName,
+    `${detail.prefix}${detail.id}`,
+    detail.label ? `${detail.prefix}${detail.id}__${detail.label}` : undefined
+  ];
+
+  for (const name of candidates) {
+    if (!name) {
+      continue;
+    }
+    const node = resolveNode(scene, name);
+    if (node) {
+      return node;
+    }
+  }
+  return null;
+};
+
+const handleHotspot = (
+  scene: Scene,
+  camera: ArcRotateCamera | Camera | null,
+  id: string,
+  label?: string,
+  pickedNodeName?: string,
+  pickedMeshName?: string,
+  prefix?: string
+) => {
+  const node = resolvePickTargetNode(scene, { pickedNodeName, pickedMeshName, prefix: prefix ?? "HP__", id, label });
+  if (node) {
+    focusCamera(scene, camera, getNodePosition(node).clone());
+  }
+  const title = label ?? PANEL_TITLES[id] ?? "Hotspot";
   emitPanel(title, id);
 };
 
@@ -149,10 +266,16 @@ export function attachActionRouter(ctx: ActionCtx): () => void {
     switch (detail.prefix) {
       case "HS__":
       case "HOTSPOT__":
-        handleHotspot(detail.id);
-        break;
       case "HP__":
-        handleHotspot(detail.id);
+        handleHotspot(
+          ctx.scene,
+          camera,
+          detail.id,
+          detail.label,
+          detail.pickedNodeName,
+          detail.pickedMeshName,
+          detail.prefix
+        );
         break;
       case "NAV__":
         if (detail.id === "door") {

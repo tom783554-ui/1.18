@@ -3,8 +3,10 @@ export const M3D_PICK_EVENT = "m3d:pick" as const;
 export type M3DPickDetail = {
   prefix: string;
   id: string;
-  name: string;
-  pickedMeshName?: string;
+  name: string; // original node name or raw name (debug)
+  label?: string; // parsed display label (optional)
+  pickedMeshName?: string; // actual picked mesh name (optional)
+  pickedNodeName?: string; // resolved target node name (optional)
   time: number;
 };
 
