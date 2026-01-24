@@ -23,6 +23,12 @@ import { emitPick } from "./m3dEvents";
 import { setM3dPick } from "../utils/m3dDebug";
 
 const PANEL_EVENT = "m3d:panel" as const;
+const emitPanelClose = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: false, title: "", id: "" } }));
+};
 
 export type HotspotEntry = {
   prefix: string;
@@ -352,18 +358,11 @@ export function attachHotspotSystem({
     hud.panel.isVisible = visible;
   };
 
-  const closePanel = () => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: false, title: "", id: "" } }));
-  };
-
   const deselect = () => {
     selectedRef.current = null;
     highlightLayer.removeAllMeshes();
     updateHudVisibility(false);
-    closePanel();
+    emitPanelClose();
     onDeselect?.();
   };
 
