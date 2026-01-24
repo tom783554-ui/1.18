@@ -34,8 +34,14 @@ export default function Hud({ engine, scene, placeholderCount }: HudProps) {
     const update = () => {
       setFps(Math.round(engine.getFps()));
       setMeshes(scene.meshes.length);
-      const vertices = scene.getTotalVertices();
-      setTriangles(Math.round(vertices / 3));
+      let tri = 0;
+      for (const mesh of scene.meshes) {
+        const indices = (mesh as { getTotalIndices?: () => number }).getTotalIndices?.() ?? 0;
+        if (Number.isFinite(indices) && indices > 0) {
+          tri += Math.floor(indices / 3);
+        }
+      }
+      setTriangles(tri);
     };
 
     update();

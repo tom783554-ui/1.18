@@ -24,6 +24,12 @@ import { emitHotspotRegistry } from "./hotspotRegistryEvents";
 import { setM3dPick } from "../utils/m3dDebug";
 
 const PANEL_EVENT = "m3d:panel" as const;
+const emitPanelOpen = (title: string, id: string) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: true, title, id } }));
+};
 const emitPanelClose = () => {
   if (typeof window === "undefined") {
     return;
@@ -74,6 +80,7 @@ const DEFAULT_RADIUS = 0.12;
 const PANEL_WIDTH = 260;
 const PANEL_HEIGHT = 116;
 const PANEL_PADDING = 24;
+const HOVER_HIGHLIGHT_COLOR = new Color3(0.35, 0.7, 1.0);
 
 const getNodePosition = (node: TransformNode | AbstractMesh) => {
   if (typeof node.getAbsolutePosition === "function") {
@@ -362,6 +369,10 @@ export function attachHotspotSystem({
 
   let lastPointer = { x: 0, y: 0 };
   let lastPick = "none";
+  let selectedHighlightMesh: Mesh | null = null;
+  let hoveredHighlightMesh: Mesh | null = null;
+  let lastHoverEntryId: string | null = null;
+  const canvas = scene.getEngine().getRenderingCanvas();
 
   const updateHudVisibility = (visible: boolean) => {
     hud.marker.isVisible = visible;
@@ -371,22 +382,51 @@ export function attachHotspotSystem({
 
   const deselect = () => {
     selectedRef.current = null;
-    highlightLayer.removeAllMeshes();
+    if (selectedHighlightMesh) {
+      highlightLayer.removeMesh(selectedHighlightMesh);
+      selectedHighlightMesh = null;
+    }
     updateHudVisibility(false);
+    setM3dPick(null, null);
     emitPanelClose();
+    if (canvas) {
+      canvas.style.cursor = "default";
+    }
     onDeselect?.();
   };
 
   const selectHotspot = (entry: HotspotEntry, pickedMesh?: AbstractMesh | null) => {
+    if (selectedRef.current?.id === entry.id) {
+      deselect();
+      return;
+    }
     selectedRef.current = entry;
-    highlightLayer.removeAllMeshes();
     const highlightMesh = resolveHighlightMesh(pickedMesh ?? entry.pickMesh);
     if (highlightMesh) {
+      if (selectedHighlightMesh && selectedHighlightMesh !== highlightMesh) {
+        highlightLayer.removeMesh(selectedHighlightMesh);
+      }
+      if (hoveredHighlightMesh) {
+        highlightLayer.removeMesh(hoveredHighlightMesh);
+        hoveredHighlightMesh = null;
+        lastHoverEntryId = null;
+      }
       highlightLayer.addMesh(highlightMesh, Color3.White());
+      selectedHighlightMesh = highlightMesh;
     }
     hud.title.text = entry.label || entry.id;
     updateHudVisibility(true);
     setM3dPick(entry.id, pickedMesh?.name ?? entry.pickMesh.name);
+    emitPanelOpen(entry.label || entry.id, entry.id);
+    emitPick({
+      prefix: entry.prefix,
+      id: entry.id,
+      name: entry.sourceName ?? entry.node.name ?? entry.id,
+      label: entry.label ?? entry.id,
+      pickedMeshName: pickedMesh?.name ?? entry.pickMesh.name,
+      pickedNodeName: entry.node?.name ?? entry.sourceName ?? undefined,
+      time: Date.now()
+    });
   };
 
   const resolveHotspotFromMesh = (mesh: AbstractMesh | null | undefined) => {
@@ -507,6 +547,40 @@ export function attachHotspotSystem({
   };
 
   const pointerObserver = scene.onPointerObservable.add((pointerInfo) => {
+    if (pointerInfo.type === PointerEventTypes.POINTERMOVE) {
+      const pickInfo = scene.pick(scene.pointerX, scene.pointerY);
+      const pickedMesh = pickInfo?.pickedMesh ?? null;
+      const entry = pickedMesh && isHotspotMesh(pickedMesh) ? resolveHotspotFromMesh(pickedMesh) : null;
+      const highlightMesh = entry ? resolveHighlightMesh(pickedMesh ?? entry.pickMesh) : null;
+      const isSelected = entry && selectedRef.current?.id === entry.id;
+
+      if (canvas) {
+        canvas.style.cursor = entry && !isSelected ? "pointer" : "default";
+      }
+
+      if (!entry || isSelected || !highlightMesh) {
+        if (hoveredHighlightMesh) {
+          highlightLayer.removeMesh(hoveredHighlightMesh);
+          hoveredHighlightMesh = null;
+          lastHoverEntryId = null;
+        }
+        return;
+      }
+
+      if (lastHoverEntryId === entry.id && hoveredHighlightMesh === highlightMesh) {
+        return;
+      }
+
+      if (hoveredHighlightMesh && hoveredHighlightMesh !== highlightMesh) {
+        highlightLayer.removeMesh(hoveredHighlightMesh);
+      }
+
+      highlightLayer.addMesh(highlightMesh, HOVER_HIGHLIGHT_COLOR);
+      hoveredHighlightMesh = highlightMesh;
+      lastHoverEntryId = entry.id;
+      return;
+    }
+
     if (pointerInfo.type !== PointerEventTypes.POINTERPICK) {
       return;
     }
@@ -520,23 +594,14 @@ export function attachHotspotSystem({
       const entry = resolveHotspotFromMesh(pickedMesh);
       if (entry) {
         selectHotspot(entry, pickedMesh);
-        // Avoid duplicating HP__/SOCKET__/NAV__/CAM picks which are already emitted by placeholders.ts.
-        if (entry.prefix === "HS__" || entry.prefix === "HOTSPOT__") {
-          emitPick({
-            prefix: entry.prefix ?? "HS__",
-            id: entry.id,
-            name: entry.sourceName ?? entry.node.name ?? entry.id,
-            label: entry.label ?? entry.id,
-            pickedMeshName: pickedMesh.name,
-            pickedNodeName: entry.node.name ?? entry.sourceName ?? undefined,
-            time: Date.now()
-          });
-        }
         return;
       }
     }
 
     deselect();
+    if (canvas) {
+      canvas.style.cursor = "default";
+    }
   });
 
   const beforeRenderObserver = scene.onBeforeRenderObservable.add(() => {
@@ -549,6 +614,14 @@ export function attachHotspotSystem({
       scene.onPointerObservable.remove(pointerObserver);
       scene.onBeforeRenderObservable.remove(beforeRenderObserver);
       deselect();
+      if (hoveredHighlightMesh) {
+        highlightLayer.removeMesh(hoveredHighlightMesh);
+        hoveredHighlightMesh = null;
+        lastHoverEntryId = null;
+      }
+      if (canvas) {
+        canvas.style.cursor = "default";
+      }
       createdColliders.splice(0).forEach((collider) => collider.dispose(false, true));
       testNodes.splice(0).forEach((node) => node.dispose(false, true));
       highlightLayer.dispose();
