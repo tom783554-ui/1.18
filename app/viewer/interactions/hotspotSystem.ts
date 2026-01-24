@@ -21,6 +21,7 @@ import {
 } from "@babylonjs/gui";
 import { emitPick } from "./m3dEvents";
 import { emitHotspotRegistry } from "./hotspotRegistryEvents";
+import { onScenarioVitals, type ScenarioVitals } from "../scenario/scenarioEngine";
 import { setM3dPick } from "../utils/m3dDebug";
 
 const PANEL_EVENT = "m3d:panel" as const;
@@ -63,9 +64,11 @@ type HudElements = {
 const INTERACTIVE_NAME_REGEX =
   /^(HS__|HOTSPOT__|HP__|NAV__|CAM__|SOCKET__|hs__|hotspot__|hp__|nav__|cam__|socket__)/i;
 const DEFAULT_RADIUS = 0.12;
-const PANEL_WIDTH = 260;
-const PANEL_HEIGHT = 116;
-const PANEL_PADDING = 24;
+const PANEL_WIDTH = 200;
+const PANEL_HEIGHT = 96;
+const PANEL_PADDING = 12;
+const PANEL_OFFSET = 14;
+const MONITOR_PANEL_SIZE = 170;
 
 const getNodePosition = (node: TransformNode | AbstractMesh) => {
   if (typeof node.getAbsolutePosition === "function") {
@@ -381,13 +384,17 @@ export function attachHotspotSystem({
   const hud = ensureHud(scene, uiRef);
   const highlightLayer = ensureHighlightLayer(scene, highlightLayerRef);
   let hotspots: HotspotEntry[] = [];
+  let latestVitals: ScenarioVitals | null = null;
+  const unsubscribeVitals = onScenarioVitals((vitals) => {
+    latestVitals = vitals;
+  });
 
   let lastPointer = { x: 0, y: 0 };
   let lastPick = "none";
 
   const updateHudVisibility = (visible: boolean) => {
     hud.marker.isVisible = visible;
-    hud.line.isVisible = visible;
+    hud.line.isVisible = false;
     hud.panel.isVisible = visible;
   };
 
@@ -400,6 +407,10 @@ export function attachHotspotSystem({
   };
 
   const selectHotspot = (entry: HotspotEntry, pickedMesh?: AbstractMesh | null) => {
+    if (selectedRef.current?.id === entry.id) {
+      deselect();
+      return;
+    }
     selectedRef.current = entry;
     highlightLayer.removeAllMeshes();
     const highlightMesh = resolveHighlightMesh(pickedMesh ?? entry.pickMesh);
@@ -446,16 +457,23 @@ export function attachHotspotSystem({
     return false;
   };
 
+  const formatMonitorVitals = (vitals: ScenarioVitals | null) => {
+    if (!vitals) {
+      return "HR -- bpm\nSpO₂ --%\nRR -- /min\nBP --/--\nTemp --°C";
+    }
+    return [
+      `HR ${vitals.hr} bpm`,
+      `SpO₂ ${vitals.spo2}%`,
+      `RR ${vitals.rr} /min`,
+      `BP ${vitals.bpSys}/${vitals.bpDia}`,
+      `Temp ${vitals.temp.toFixed(1)}°C`
+    ].join("\n");
+  };
+
   const updateHudLayout = () => {
     const engine = scene.getEngine();
     const width = engine.getRenderWidth();
     const height = engine.getRenderHeight();
-
-    const panelLeft = width - PANEL_WIDTH - PANEL_PADDING;
-    const panelTop = Math.max(20, (height - PANEL_HEIGHT) * 0.5);
-
-    hud.panel.leftInPixels = panelLeft;
-    hud.panel.topInPixels = panelTop;
 
     const selected = selectedRef.current;
     if (!selected) {
@@ -463,6 +481,18 @@ export function attachHotspotSystem({
       hud.debug.text = `lastPointer: ${Math.round(lastPointer.x)}, ${Math.round(lastPointer.y)}\nlastPick: ${lastPick}\nselected: —`;
       return;
     }
+
+    const isMonitor = selected.id.toLowerCase().includes("monitor") || selected.label.toLowerCase().includes("monitor");
+    const panelWidth = isMonitor ? MONITOR_PANEL_SIZE : PANEL_WIDTH;
+    const panelHeight = isMonitor ? MONITOR_PANEL_SIZE : PANEL_HEIGHT;
+
+    hud.panel.widthInPixels = panelWidth;
+    hud.panel.heightInPixels = panelHeight;
+    hud.panel.cornerRadius = isMonitor ? 8 : 10;
+    hud.title.fontSize = isMonitor ? 14 : 16;
+    hud.details.fontSize = isMonitor ? 12 : 11;
+    hud.details.height = isMonitor ? `${panelHeight - 48}px` : "60px";
+    hud.details.paddingTopInPixels = isMonitor ? 40 : 44;
 
     const worldPos = getNodePosition(selected.node);
     const viewport = camera.viewport.toGlobal(width, height);
@@ -476,13 +506,27 @@ export function attachHotspotSystem({
     hud.marker.leftInPixels = projected.x - hud.marker.widthInPixels / 2;
     hud.marker.topInPixels = projected.y - hud.marker.heightInPixels / 2;
 
-    hud.line.x1 = projected.x;
-    hud.line.y1 = projected.y;
-    hud.line.x2 = panelLeft;
-    hud.line.y2 = panelTop + PANEL_HEIGHT * 0.5;
+    const clampedLeft = Math.min(
+      Math.max(projected.x - panelWidth / 2, PANEL_PADDING),
+      width - panelWidth - PANEL_PADDING
+    );
+    const aboveTop = projected.y - panelHeight - PANEL_OFFSET;
+    const placeBelow = aboveTop < PANEL_PADDING;
+    const panelTop = placeBelow
+      ? Math.min(projected.y + PANEL_OFFSET, height - panelHeight - PANEL_PADDING)
+      : aboveTop;
+    const clampedTop = Math.min(Math.max(panelTop, PANEL_PADDING), height - panelHeight - PANEL_PADDING);
 
-    const distance = Vector3.Distance(camera.position, worldPos);
-    hud.details.text = `Prefix: ${selected.prefix}\nID: ${selected.id}\nDistance: ${distance.toFixed(2)}m\nNode: ${selected.sourceName}`;
+    hud.panel.leftInPixels = clampedLeft;
+    hud.panel.topInPixels = clampedTop;
+
+    if (isMonitor) {
+      hud.title.text = "Monitor";
+      hud.details.text = formatMonitorVitals(latestVitals);
+    } else {
+      const distance = Vector3.Distance(camera.position, worldPos);
+      hud.details.text = `ID: ${selected.id}\nDistance: ${distance.toFixed(2)}m\nNode: ${selected.sourceName}`;
+    }
     hud.debug.text = `lastPointer: ${Math.round(lastPointer.x)}, ${Math.round(lastPointer.y)}\nlastPick: ${lastPick}\nselected: ${selected.id}`;
   };
 
@@ -565,6 +609,7 @@ export function attachHotspotSystem({
       scene.onPointerObservable.remove(pointerObserver);
       scene.onBeforeRenderObservable.remove(beforeRenderObserver);
       deselect();
+      unsubscribeVitals();
       createdColliders.splice(0).forEach((collider) => collider.dispose(false, true));
       testNodes.splice(0).forEach((node) => node.dispose(false, true));
       highlightLayer.dispose();
