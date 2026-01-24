@@ -108,7 +108,9 @@ const getMetadata = (node: TransformNode | AbstractMesh) => {
   if (hotspotMeta) {
     const prefixOverride = hotspotMeta.prefix ?? hotspotMeta.kind;
     return {
-      prefix: normalizePrefix(typeof prefixOverride === "string" ? prefixOverride : parsed.prefix),
+      prefix: normalizePrefix(
+        typeof prefixOverride === "string" ? prefixOverride : parsed.prefix
+      ),
       id: String(hotspotMeta.id ?? hotspotMeta.hotspotId ?? parsed.id),
       label: String(hotspotMeta.label ?? hotspotMeta.id ?? parsed.label),
       type: hotspotMeta.type ? String(hotspotMeta.type) : undefined,
@@ -118,7 +120,9 @@ const getMetadata = (node: TransformNode | AbstractMesh) => {
   if (metadata && (metadata.hotspotId || metadata.label || metadata.type)) {
     const prefixOverride = metadata.prefix ?? metadata.kind;
     return {
-      prefix: normalizePrefix(typeof prefixOverride === "string" ? prefixOverride : parsed.prefix),
+      prefix: normalizePrefix(
+        typeof prefixOverride === "string" ? prefixOverride : parsed.prefix
+      ),
       id: String(metadata.hotspotId ?? parsed.id),
       label: String(metadata.label ?? metadata.hotspotId ?? parsed.label),
       type: metadata.type ? String(metadata.type) : undefined,
@@ -139,7 +143,11 @@ const createPickCollider = (
   label: string,
   type?: string
 ): AbstractMesh => {
-  const collider = MeshBuilder.CreateSphere(`${prefix}COLLIDER__${id}`, { diameter: radius * 2 }, scene);
+  const collider = MeshBuilder.CreateSphere(
+    `${prefix}COLLIDER__${id}`,
+    { diameter: radius * 2 },
+    scene
+  );
   collider.parent = node;
   collider.isVisible = false;
   collider.isPickable = true;
@@ -261,7 +269,11 @@ const createTestHotspots = (scene: Scene, camera: Camera): TransformNode[] => {
     );
     collider.parent = node;
 
-    const visible = MeshBuilder.CreateSphere(`__DEBUG__VISIBLE__${index + 1}`, { diameter: 0.06 }, scene);
+    const visible = MeshBuilder.CreateSphere(
+      `__DEBUG__VISIBLE__${index + 1}`,
+      { diameter: 0.06 },
+      scene
+    );
     visible.parent = node;
     visible.isPickable = false;
     visible.visibility = 0.9;
