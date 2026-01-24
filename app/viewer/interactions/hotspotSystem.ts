@@ -20,6 +20,7 @@ import {
   TextBlock
 } from "@babylonjs/gui";
 import { emitPick } from "./m3dEvents";
+import { emitHotspotRegistry } from "./hotspotRegistryEvents";
 import { setM3dPick } from "../utils/m3dDebug";
 
 const PANEL_EVENT = "m3d:panel" as const;
@@ -73,6 +74,16 @@ const getNodePosition = (node: TransformNode | AbstractMesh) => {
     return node.getAbsolutePosition();
   }
   return node.position;
+};
+
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
+const toPrefix = (name: string) => {
+  const upper = name.toUpperCase();
+  const prefixes = ["HS__", "HOTSPOT__", "HP__", "SOCKET__", "NAV__", "CAM__"];
+  for (const prefix of prefixes) {
+    if (upper.startsWith(prefix)) return prefix;
+  }
+  return "HS__";
 };
 
 const parseName = (name: string) => {
@@ -473,6 +484,27 @@ export function attachHotspotSystem({
         entry.pickMesh.isPickable = true;
       }
     });
+
+    // Emit hotspot registry (for JSON export + debugging)
+    try {
+      const entries = hotspots.map((entry) => {
+        const pos = getNodePosition(entry.node);
+        return {
+          prefix: entry.prefix ? entry.prefix : toPrefix(entry.sourceName),
+          id: entry.id,
+          label: entry.label ?? entry.id,
+          nodeName: entry.sourceName ?? entry.node.name ?? entry.id,
+          worldPos: [round3(pos.x), round3(pos.y), round3(pos.z)] as [number, number, number]
+        };
+      });
+      emitHotspotRegistry({
+        generatedAt: Date.now(),
+        count: entries.length,
+        entries
+      });
+    } catch (error) {
+      console.warn("Failed to emit hotspot registry", error);
+    }
   };
 
   const pointerObserver = scene.onPointerObservable.add((pointerInfo) => {
