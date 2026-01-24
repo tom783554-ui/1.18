@@ -489,10 +489,12 @@ export function attachHotspotSystem({
         // Avoid duplicating HP__/SOCKET__/NAV__/CAM picks which are already emitted by placeholders.ts.
         if (entry.prefix === "HS__" || entry.prefix === "HOTSPOT__") {
           emitPick({
-            prefix: entry.prefix,
+            prefix: entry.prefix ?? "HS__",
             id: entry.id,
-            name: entry.label,
+            name: entry.sourceName ?? entry.node.name ?? entry.id,
+            label: entry.label ?? entry.id,
             pickedMeshName: pickedMesh.name,
+            pickedNodeName: entry.node.name ?? entry.sourceName ?? undefined,
             time: Date.now()
           });
         }
