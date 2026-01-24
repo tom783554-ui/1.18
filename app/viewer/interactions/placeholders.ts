@@ -64,12 +64,10 @@ export function wirePlaceholders(scene: Scene): { count: number; dispose: () => 
   const placeholderNames = new Set<string>();
 
   for (const mesh of scene.meshes) {
-    mesh.isPickable = false;
-    mesh.isNearPickable = false;
+    mesh.isPickable = true;
+    mesh.isNearPickable = true;
     const match = matchPrefix(mesh.name);
     if (match && mesh instanceof Mesh) {
-      mesh.isPickable = true;
-      mesh.isNearPickable = true;
       placeholderNames.add(match.name);
     }
   }
