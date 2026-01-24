@@ -20,6 +20,7 @@ import {
   TextBlock
 } from "@babylonjs/gui";
 import { emitPick } from "./m3dEvents";
+import { setM3dPick } from "../utils/m3dDebug";
 
 export type HotspotEntry = {
   id: string;
@@ -350,6 +351,7 @@ export function attachHotspotSystem({
     }
     hud.title.text = entry.label || entry.id;
     updateHudVisibility(true);
+    setM3dPick(entry.id, pickedMesh?.name ?? entry.pickMesh.name);
   };
 
   const resolveHotspotFromMesh = (mesh: AbstractMesh | null | undefined) => {

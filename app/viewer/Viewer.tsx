@@ -17,6 +17,7 @@ import { createEngine } from "./engine/createEngine";
 import { attachHotspotSystem, type HotspotEntry } from "./interactions/hotspotSystem";
 import { configureCamera, createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
+import { getM3dDebugState, setM3dReady } from "./utils/m3dDebug";
 import Hud from "./ui/Hud";
 import LoadingOverlay from "./ui/LoadingOverlay";
 import Panels from "./ui/Panels";
@@ -85,6 +86,11 @@ export default function Viewer() {
   const [shareGlbParam, setShareGlbParam] = useState<string | null>(null);
   const [placeholderCount, setPlaceholderCount] = useState(0);
   const [panel, setPanel] = useState<{ title: string; id: string } | null>(null);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<{ lastHotspotId: string; lastPickMeshName: string }>({
+    lastHotspotId: "none",
+    lastPickMeshName: "none"
+  });
 
   const shareUrl = useMemo(() => formatShareUrl(shareGlbParam), [shareGlbParam]);
 
@@ -308,6 +314,7 @@ export default function Viewer() {
         return;
       }
 
+      setM3dReady(false);
       setIsLoading(true);
       setMissingMain(false);
       setMissingMainDetails(null);
@@ -340,6 +347,7 @@ export default function Viewer() {
       try {
         await loadMainGlb(scene, url, (update) => setProgress({ ...update }));
         await scene.whenReadyAsync();
+        setM3dReady(true);
         const { wirePlaceholders } = await import("./interactions/placeholders");
         const wired = wirePlaceholders(scene);
         placeholderCleanupRef.current = wired.dispose;
@@ -407,6 +415,35 @@ export default function Viewer() {
   }, []);
 
   useEffect(() => {
+    const state = getM3dDebugState();
+    if (state) {
+      setDebugInfo({
+        lastHotspotId: state.lastHotspotId ?? "none",
+        lastPickMeshName: state.lastPickMeshName ?? "none"
+      });
+    }
+    const params = new URLSearchParams(window.location.search);
+    setDebugEnabled(params.get("debug") === "1");
+  }, []);
+
+  useEffect(() => {
+    if (!debugEnabled) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      const state = getM3dDebugState();
+      if (!state) {
+        return;
+      }
+      setDebugInfo({
+        lastHotspotId: state.lastHotspotId ?? "none",
+        lastPickMeshName: state.lastPickMeshName ?? "none"
+      });
+    }, 250);
+    return () => window.clearInterval(interval);
+  }, [debugEnabled]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return undefined;
@@ -417,6 +454,7 @@ export default function Viewer() {
     cleanupScalingRef.current = cleanupScaling;
 
     const { scene, camera } = createScene(engine, canvas);
+    setM3dReady(false);
     sceneRef.current = scene;
     cameraRef.current = camera;
 
@@ -515,6 +553,13 @@ export default function Viewer() {
         onResetLimits={handleResetLimits}
         onNormalize={handleNormalizeGlb}
       />
+      {debugEnabled ? (
+        <div className="debug-hud" role="status" aria-live="polite">
+          <div>debug: on</div>
+          <div>lastHotspot: {debugInfo.lastHotspotId || "none"}</div>
+          <div>lastPick: {debugInfo.lastPickMeshName || "none"}</div>
+        </div>
+      ) : null}
       <div className="control-bar" role="toolbar" aria-label="Viewer controls">
         <button type="button" onClick={handleReset}>
           Reset
@@ -598,6 +643,20 @@ export default function Viewer() {
         }
         .control-bar button:hover {
           background: rgba(255, 255, 255, 0.16);
+        }
+        .debug-hud {
+          position: absolute;
+          top: 12px;
+          left: 12px;
+          z-index: 9;
+          padding: 8px 10px;
+          border-radius: 8px;
+          background: rgba(0, 0, 0, 0.6);
+          color: #f1f5f9;
+          font-size: 12px;
+          line-height: 1.4;
+          pointer-events: none;
+          white-space: pre-line;
         }
       `}</style>
     </div>
