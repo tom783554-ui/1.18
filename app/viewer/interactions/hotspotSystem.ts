@@ -66,16 +66,8 @@ type HudElements = {
   debug: TextBlock;
 };
 
-const INTERACTIVE_PREFIXES = ["HS__", "HOTSPOT__", "HP__", "SOCKET__", "NAV__", "CAM__"] as const;
-const getPrefix = (name: string): string | null => {
-  const upper = name.toUpperCase();
-  for (const prefix of INTERACTIVE_PREFIXES) {
-    if (upper.startsWith(prefix)) {
-      return prefix;
-    }
-  }
-  return null;
-};
+const INTERACTIVE_NAME_REGEX =
+  /^(HS__|HOTSPOT__|HP__|NAV__|CAM__|SOCKET__|hs__|hotspot__|hp__|nav__|cam__|socket__)/i;
 const DEFAULT_RADIUS = 0.12;
 const PANEL_WIDTH = 260;
 const PANEL_HEIGHT = 116;
@@ -90,46 +82,50 @@ const getNodePosition = (node: TransformNode | AbstractMesh) => {
 };
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
-const toPrefix = (name: string) => {
-  const upper = name.toUpperCase();
-  const prefixes = ["HS__", "HOTSPOT__", "HP__", "SOCKET__", "NAV__", "CAM__"];
-  for (const prefix of prefixes) {
-    if (upper.startsWith(prefix)) return prefix;
+const normalizePrefix = (prefix?: string | null) => {
+  if (!prefix) {
+    return "HS__";
   }
-  return "HS__";
+  const upper = prefix.toUpperCase();
+  return upper.endsWith("__") ? upper : `${upper}__`;
 };
 
 const parseName = (name: string) => {
   const parts = name.split("__");
   if (parts.length >= 2) {
+    const prefix = normalizePrefix(`${parts[0]}__`);
     const id = parts[1] || name;
     const label = parts[2] || id;
-    return { id, label };
+    return { prefix, id, label };
   }
-  return { id: name, label: name };
+  return { prefix: "HS__", id: name, label: name };
 };
 
 const getMetadata = (node: TransformNode | AbstractMesh) => {
   const metadata = (node as { metadata?: Record<string, unknown> | null }).metadata;
   const hotspotMeta = (metadata?.hotspot as Record<string, unknown> | undefined) ?? null;
+  const parsed = parseName(node.name);
   if (hotspotMeta) {
+    const prefixOverride = hotspotMeta.prefix ?? hotspotMeta.kind;
     return {
-      id: String(hotspotMeta.id ?? hotspotMeta.hotspotId ?? node.name),
-      label: String(hotspotMeta.label ?? hotspotMeta.id ?? node.name),
+      prefix: normalizePrefix(typeof prefixOverride === "string" ? prefixOverride : parsed.prefix),
+      id: String(hotspotMeta.id ?? hotspotMeta.hotspotId ?? parsed.id),
+      label: String(hotspotMeta.label ?? hotspotMeta.id ?? parsed.label),
       type: hotspotMeta.type ? String(hotspotMeta.type) : undefined,
       radius: hotspotMeta.radius ? Number(hotspotMeta.radius) : undefined
     };
   }
   if (metadata && (metadata.hotspotId || metadata.label || metadata.type)) {
+    const prefixOverride = metadata.prefix ?? metadata.kind;
     return {
-      id: String(metadata.hotspotId ?? node.name),
-      label: String(metadata.label ?? metadata.hotspotId ?? node.name),
+      prefix: normalizePrefix(typeof prefixOverride === "string" ? prefixOverride : parsed.prefix),
+      id: String(metadata.hotspotId ?? parsed.id),
+      label: String(metadata.label ?? metadata.hotspotId ?? parsed.label),
       type: metadata.type ? String(metadata.type) : undefined,
       radius: metadata.radius ? Number(metadata.radius) : undefined
     };
   }
-  const parsed = parseName(node.name);
-  return { id: parsed.id, label: parsed.label };
+  return { prefix: parsed.prefix, id: parsed.id, label: parsed.label };
 };
 
 const isRenderableMesh = (mesh: AbstractMesh) => mesh.getTotalVertices?.() > 0;
@@ -138,17 +134,21 @@ const createPickCollider = (
   scene: Scene,
   node: TransformNode | AbstractMesh,
   radius: number,
-  id: string
+  id: string,
+  prefix: string,
+  label: string,
+  type?: string
 ): AbstractMesh => {
-  const collider = MeshBuilder.CreateSphere(`HS__COLLIDER__${id}`, { diameter: radius * 2 }, scene);
+  const collider = MeshBuilder.CreateSphere(`${prefix}COLLIDER__${id}`, { diameter: radius * 2 }, scene);
   collider.parent = node;
   collider.isVisible = false;
   collider.isPickable = true;
   collider.position = Vector3.Zero();
   collider.metadata = {
+    prefix,
     hotspotId: id,
-    label: id,
-    type: "hotspot",
+    label,
+    type: type ?? "hotspot",
     radius,
     __hotspotCollider: true
   };
@@ -166,9 +166,12 @@ const resolveHighlightMesh = (mesh: AbstractMesh): Mesh | null => {
   return null;
 };
 
-const shouldTreatAsHotspot = (node: TransformNode | AbstractMesh) => {
+const shouldTreatAsInteractive = (node: TransformNode | AbstractMesh) => {
   const metadata = (node as { metadata?: Record<string, unknown> | null }).metadata;
-  return Boolean(getPrefix(node.name) || metadata?.hotspot || metadata?.hotspotId);
+  if (metadata?.__debugOnly === true) {
+    return false;
+  }
+  return Boolean(INTERACTIVE_NAME_REGEX.test(node.name) || metadata?.hotspot || metadata?.hotspotId);
 };
 
 const buildHotspots = (
@@ -185,25 +188,24 @@ const buildHotspots = (
   ];
 
   nodes.forEach((node) => {
-    if (!shouldTreatAsHotspot(node)) {
+    if (!shouldTreatAsInteractive(node)) {
       return;
     }
 
     const meta = getMetadata(node);
     const radius = Number.isFinite(meta.radius) ? (meta.radius as number) : DEFAULT_RADIUS;
-    const prefix = getPrefix(node.name) ?? "HS__";
 
     let pickMesh: AbstractMesh;
     if (node instanceof AbstractMesh && isRenderableMesh(node)) {
       node.isPickable = true;
       pickMesh = node;
     } else {
-      pickMesh = createPickCollider(scene, node, radius, meta.id);
+      pickMesh = createPickCollider(scene, node, radius, meta.id, meta.prefix, meta.label, meta.type);
       colliders.push(pickMesh);
     }
 
     const entry: HotspotEntry = {
-      prefix,
+      prefix: meta.prefix,
       id: meta.id,
       label: meta.label,
       type: meta.type ?? "hotspot",
@@ -239,7 +241,7 @@ const createTestHotspots = (scene: Scene, camera: Camera): TransformNode[] => {
 
   const nodes: TransformNode[] = [];
   offsets.forEach((offset, index) => {
-    const node = new TransformNode(`HS__Test${index + 1}__Demo`, scene);
+    const node = new TransformNode(`HP__Test${index + 1}__Demo`, scene);
     node.position = base.add(offset);
     node.metadata = {
       hotspotId: `Test${index + 1}`,
@@ -248,10 +250,18 @@ const createTestHotspots = (scene: Scene, camera: Camera): TransformNode[] => {
       radius: 0.12
     };
 
-    const collider = createPickCollider(scene, node, 0.12, `Test${index + 1}`);
+    const collider = createPickCollider(
+      scene,
+      node,
+      0.12,
+      `Test${index + 1}`,
+      "HP__",
+      `Test Hotspot ${index + 1}`,
+      "hotspot"
+    );
     collider.parent = node;
 
-    const visible = MeshBuilder.CreateSphere(`HS__VISIBLE__${index + 1}`, { diameter: 0.06 }, scene);
+    const visible = MeshBuilder.CreateSphere(`__DEBUG__VISIBLE__${index + 1}`, { diameter: 0.06 }, scene);
     visible.parent = node;
     visible.isPickable = false;
     visible.visibility = 0.9;
@@ -455,11 +465,7 @@ export function attachHotspotSystem({
     if (hotspotMap.has(mesh.uniqueId)) {
       return true;
     }
-    if (getPrefix(mesh.name)) {
-      return true;
-    }
-    const metadata = (mesh as { metadata?: Record<string, unknown> | null }).metadata;
-    if (metadata?.hotspot || metadata?.hotspotId) {
+    if (shouldTreatAsInteractive(mesh)) {
       return true;
     }
     if (mesh.parent && hotspotMap.has(mesh.parent.uniqueId)) {
@@ -481,6 +487,7 @@ export function attachHotspotSystem({
 
     const selected = selectedRef.current;
     if (!selected) {
+      updateHudVisibility(false);
       hud.debug.text = `lastPointer: ${Math.round(lastPointer.x)}, ${Math.round(lastPointer.y)}\nlastPick: ${lastPick}\nselected: —`;
       return;
     }
@@ -529,7 +536,7 @@ export function attachHotspotSystem({
       const entries = hotspots.map((entry) => {
         const pos = getNodePosition(entry.node);
         return {
-          prefix: entry.prefix ? entry.prefix : toPrefix(entry.sourceName),
+          prefix: entry.prefix,
           id: entry.id,
           label: entry.label ?? entry.id,
           nodeName: entry.sourceName ?? entry.node.name ?? entry.id,
