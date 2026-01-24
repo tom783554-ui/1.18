@@ -65,6 +65,13 @@ export default function Panels({ panel, onClose, ventilatorOn, onVentilatorToggl
                   {ventilatorOn ? "ON" : "OFF"}
                 </span>
               </div>
+              <button
+                type="button"
+                className="action toggle"
+                onClick={() => onVentilatorToggle(!ventilatorOn)}
+              >
+                ON/OFF
+              </button>
               <div className="button-row">
                 <button
                   type="button"
@@ -230,6 +237,10 @@ export default function Panels({ panel, onClose, ventilatorOn, onVentilatorToggl
           padding: 8px 10px;
           border-radius: 10px;
           cursor: pointer;
+        }
+        .action.toggle {
+          width: 100%;
+          justify-self: stretch;
         }
         .action.active {
           border-color: rgba(59, 130, 246, 0.7);

@@ -32,6 +32,13 @@ const emitPanelClose = () => {
   window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: false, title: "", id: "" } }));
 };
 
+const emitPanelOpen = (title: string, id: string) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: true, title, id } }));
+};
+
 export type HotspotEntry = {
   prefix: string;
   id: string;
@@ -65,7 +72,7 @@ const INTERACTIVE_NAME_REGEX =
   /^(HS__|HOTSPOT__|HP__|NAV__|CAM__|SOCKET__|hs__|hotspot__|hp__|nav__|cam__|socket__)/i;
 const DEFAULT_RADIUS = 0.12;
 const PANEL_WIDTH = 200;
-const PANEL_HEIGHT = 96;
+const PANEL_HEIGHT = 140;
 const PANEL_PADDING = 12;
 const PANEL_OFFSET = 14;
 const MONITOR_PANEL_SIZE = 170;
@@ -237,19 +244,22 @@ const createTestHotspots = (scene: Scene, camera: Camera): TransformNode[] => {
   }
   const forward = camera.getDirection(Vector3.Forward()).normalize();
   const base = camera.position.add(forward.scale(2.4));
-  const offsets = [
-    new Vector3(-0.4, 0.2, 0),
-    new Vector3(0.2, 0.4, 0.1),
-    new Vector3(0.4, -0.1, -0.1)
+  const testHotspots = [
+    { id: "Ventilator", label: "Ventilator", offset: new Vector3(-0.42, 0.18, 0.02) },
+    { id: "Monitor", label: "Patient Monitor", offset: new Vector3(-0.08, 0.34, 0.12) },
+    { id: "Suction", label: "Suction Regulator", offset: new Vector3(0.32, 0.22, -0.04) },
+    { id: "IVPump", label: "IV Pump", offset: new Vector3(0.18, 0.05, 0.1) },
+    { id: "Oxygen", label: "Oxygen Flow", offset: new Vector3(0.46, -0.08, -0.08) },
+    { id: "BedRail", label: "Bed Rail", offset: new Vector3(-0.2, -0.18, -0.12) }
   ];
 
   const nodes: TransformNode[] = [];
-  offsets.forEach((offset, index) => {
-    const node = new TransformNode(`HP__Test${index + 1}__Demo`, scene);
-    node.position = base.add(offset);
+  testHotspots.forEach((hotspot, index) => {
+    const node = new TransformNode(`HP__${hotspot.id}__${hotspot.label}`, scene);
+    node.position = base.add(hotspot.offset);
     node.metadata = {
-      hotspotId: `Test${index + 1}`,
-      label: `Test Hotspot ${index + 1}`,
+      hotspotId: hotspot.id,
+      label: hotspot.label,
       type: "hotspot",
       radius: 0.12
     };
@@ -258,9 +268,9 @@ const createTestHotspots = (scene: Scene, camera: Camera): TransformNode[] => {
       scene,
       node,
       0.12,
-      `Test${index + 1}`,
+      hotspot.id,
       "HP__",
-      `Test Hotspot ${index + 1}`,
+      hotspot.label,
       "hotspot"
     );
     collider.parent = node;
@@ -408,7 +418,6 @@ export function attachHotspotSystem({
 
   const selectHotspot = (entry: HotspotEntry, pickedMesh?: AbstractMesh | null) => {
     if (selectedRef.current?.id === entry.id) {
-      deselect();
       return;
     }
     selectedRef.current = entry;
@@ -419,6 +428,7 @@ export function attachHotspotSystem({
     }
     hud.title.text = entry.label || entry.id;
     updateHudVisibility(true);
+    emitPanelOpen(entry.label || entry.id, entry.id);
     setM3dPick(entry.id, pickedMesh?.name ?? entry.pickMesh.name);
   };
 
@@ -491,7 +501,7 @@ export function attachHotspotSystem({
     hud.panel.cornerRadius = isMonitor ? 8 : 10;
     hud.title.fontSize = isMonitor ? 14 : 16;
     hud.details.fontSize = isMonitor ? 12 : 11;
-    hud.details.height = isMonitor ? `${panelHeight - 48}px` : "60px";
+    hud.details.height = isMonitor ? `${panelHeight - 48}px` : "92px";
     hud.details.paddingTopInPixels = isMonitor ? 40 : 44;
 
     const worldPos = getNodePosition(selected.node);
@@ -525,7 +535,16 @@ export function attachHotspotSystem({
       hud.details.text = formatMonitorVitals(latestVitals);
     } else {
       const distance = Vector3.Distance(camera.position, worldPos);
-      hud.details.text = `ID: ${selected.id}\nDistance: ${distance.toFixed(2)}m\nNode: ${selected.sourceName}`;
+      const position = `${round3(worldPos.x)}, ${round3(worldPos.y)}, ${round3(worldPos.z)}`;
+      hud.details.text = [
+        `ID: ${selected.id}`,
+        `Label: ${selected.label || selected.id}`,
+        `Type: ${selected.type ?? "hotspot"}`,
+        `Distance: ${distance.toFixed(2)}m`,
+        `Radius: ${selected.radius.toFixed(2)}m`,
+        `World: ${position}`,
+        `Node: ${selected.sourceName}`
+      ].join("\n");
     }
     hud.debug.text = `lastPointer: ${Math.round(lastPointer.x)}, ${Math.round(lastPointer.y)}\nlastPick: ${lastPick}\nselected: ${selected.id}`;
   };
