@@ -23,6 +23,7 @@ import { emitPick } from "./m3dEvents";
 import { setM3dPick } from "../utils/m3dDebug";
 
 export type HotspotEntry = {
+  prefix: string;
   id: string;
   label: string;
   type?: string;
@@ -49,7 +50,16 @@ type HudElements = {
   debug: TextBlock;
 };
 
-const HOTSPOT_NAME_REGEX = /^(HS__|HOTSPOT__|hs__)/i;
+const INTERACTIVE_PREFIXES = ["HS__", "HOTSPOT__", "HP__", "SOCKET__", "NAV__", "CAM__"] as const;
+const getPrefix = (name: string): string | null => {
+  const upper = name.toUpperCase();
+  for (const prefix of INTERACTIVE_PREFIXES) {
+    if (upper.startsWith(prefix)) {
+      return prefix;
+    }
+  }
+  return null;
+};
 const DEFAULT_RADIUS = 0.12;
 const PANEL_WIDTH = 260;
 const PANEL_HEIGHT = 116;
@@ -131,7 +141,7 @@ const resolveHighlightMesh = (mesh: AbstractMesh): Mesh | null => {
 
 const shouldTreatAsHotspot = (node: TransformNode | AbstractMesh) => {
   const metadata = (node as { metadata?: Record<string, unknown> | null }).metadata;
-  return HOTSPOT_NAME_REGEX.test(node.name) || Boolean(metadata?.hotspot || metadata?.hotspotId);
+  return Boolean(getPrefix(node.name) || metadata?.hotspot || metadata?.hotspotId);
 };
 
 const buildHotspots = (
@@ -154,6 +164,7 @@ const buildHotspots = (
 
     const meta = getMetadata(node);
     const radius = Number.isFinite(meta.radius) ? (meta.radius as number) : DEFAULT_RADIUS;
+    const prefix = getPrefix(node.name) ?? "HS__";
 
     let pickMesh: AbstractMesh;
     if (node instanceof AbstractMesh && isRenderableMesh(node)) {
@@ -165,6 +176,7 @@ const buildHotspots = (
     }
 
     const entry: HotspotEntry = {
+      prefix,
       id: meta.id,
       label: meta.label,
       type: meta.type ?? "hotspot",
@@ -380,7 +392,7 @@ export function attachHotspotSystem({
     if (hotspotMap.has(mesh.uniqueId)) {
       return true;
     }
-    if (HOTSPOT_NAME_REGEX.test(mesh.name)) {
+    if (getPrefix(mesh.name)) {
       return true;
     }
     const metadata = (mesh as { metadata?: Record<string, unknown> | null }).metadata;
@@ -428,7 +440,7 @@ export function attachHotspotSystem({
     hud.line.y2 = panelTop + PANEL_HEIGHT * 0.5;
 
     const distance = Vector3.Distance(camera.position, worldPos);
-    hud.details.text = `ID: ${selected.id}\nDistance: ${distance.toFixed(2)}m\nNode: ${selected.sourceName}`;
+    hud.details.text = `Prefix: ${selected.prefix}\nID: ${selected.id}\nDistance: ${distance.toFixed(2)}m\nNode: ${selected.sourceName}`;
     hud.debug.text = `lastPointer: ${Math.round(lastPointer.x)}, ${Math.round(lastPointer.y)}\nlastPick: ${lastPick}\nselected: ${selected.id}`;
   };
 
@@ -463,13 +475,16 @@ export function attachHotspotSystem({
       const entry = resolveHotspotFromMesh(pick.pickedMesh);
       if (entry) {
         selectHotspot(entry, pick.pickedMesh);
-        emitPick({
-          prefix: "HS__",
-          id: entry.id,
-          name: entry.label,
-          pickedMeshName: pick.pickedMesh.name,
-          time: Date.now()
-        });
+        // Avoid duplicating HP__/SOCKET__/NAV__/CAM picks which are already emitted by placeholders.ts.
+        if (entry.prefix === "HS__" || entry.prefix === "HOTSPOT__") {
+          emitPick({
+            prefix: entry.prefix,
+            id: entry.id,
+            name: entry.label,
+            pickedMeshName: pick.pickedMesh.name,
+            time: Date.now()
+          });
+        }
         return;
       }
     }
