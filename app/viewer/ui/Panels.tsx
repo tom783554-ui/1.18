@@ -1,23 +1,13 @@
 "use client";
 
-type PanelState = { title: string; id: string } | null;
+import { setVentOn } from "../../../src/engine/store";
+import { useEngineState } from "../../../src/engine/useEngineState";
 
-type VitalsState = {
-  heartRate: number;
-  spo2: number;
-  respRate: number;
-  systolic: number;
-  diastolic: number;
-  temperature: number;
-  updatedAt: string;
-};
+type PanelState = { title: string; id: string } | null;
 
 type PanelsProps = {
   panel: PanelState;
   onClose: () => void;
-  ventilatorOn: boolean;
-  onVentilatorToggle: (nextState: boolean) => void;
-  vitals: VitalsState;
 };
 
 const isVentilatorPanel = (panel: PanelState) => {
@@ -38,7 +28,14 @@ const isMonitorPanel = (panel: PanelState) => {
   return id.includes("monitor") || title.includes("monitor");
 };
 
-export default function Panels({ panel, onClose, ventilatorOn, onVentilatorToggle, vitals }: PanelsProps) {
+const formatUpdatedTime = (lastUpdatedMs: number) =>
+  new Date(lastUpdatedMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+export default function Panels({ panel, onClose }: PanelsProps) {
+  const engineState = useEngineState();
+  const { vitals, devices, lastUpdatedMs } = engineState;
+  const updatedLabel = formatUpdatedTime(lastUpdatedMs);
+
   if (!panel) {
     return null;
   }
@@ -61,29 +58,29 @@ export default function Panels({ panel, onClose, ventilatorOn, onVentilatorToggl
               <div className="section-title">Ventilator Control</div>
               <div className="status-row">
                 <span>Status</span>
-                <span className={ventilatorOn ? "status on" : "status off"}>
-                  {ventilatorOn ? "ON" : "OFF"}
+                <span className={devices.ventOn ? "status on" : "status off"}>
+                  {devices.ventOn ? "ON" : "OFF"}
                 </span>
               </div>
               <button
                 type="button"
                 className="action toggle"
-                onClick={() => onVentilatorToggle(!ventilatorOn)}
+                onClick={() => setVentOn(!devices.ventOn)}
               >
                 ON/OFF
               </button>
               <div className="button-row">
                 <button
                   type="button"
-                  className={ventilatorOn ? "action active" : "action"}
-                  onClick={() => onVentilatorToggle(true)}
+                  className={devices.ventOn ? "action active" : "action"}
+                  onClick={() => setVentOn(true)}
                 >
                   Turn On
                 </button>
                 <button
                   type="button"
-                  className={!ventilatorOn ? "action active" : "action"}
-                  onClick={() => onVentilatorToggle(false)}
+                  className={!devices.ventOn ? "action active" : "action"}
+                  onClick={() => setVentOn(false)}
                 >
                   Turn Off
                 </button>
@@ -96,28 +93,28 @@ export default function Panels({ panel, onClose, ventilatorOn, onVentilatorToggl
               <div className="vitals-grid">
                 <div className="vital">
                   <span className="label">HR</span>
-                  <span className="value">{vitals.heartRate} bpm</span>
+                  <span className="value">{Math.round(vitals.hrBpm)} bpm</span>
                 </div>
                 <div className="vital">
                   <span className="label">SpO₂</span>
-                  <span className="value">{vitals.spo2}%</span>
+                  <span className="value">{vitals.spo2Pct.toFixed(1)}%</span>
                 </div>
                 <div className="vital">
                   <span className="label">Resp</span>
-                  <span className="value">{vitals.respRate} rpm</span>
+                  <span className="value">{Math.round(vitals.respRpm)} rpm</span>
                 </div>
                 <div className="vital">
                   <span className="label">BP</span>
                   <span className="value">
-                    {vitals.systolic}/{vitals.diastolic} mmHg
+                    {Math.round(vitals.bpSys)}/{Math.round(vitals.bpDia)} mmHg
                   </span>
                 </div>
                 <div className="vital">
                   <span className="label">Temp</span>
-                  <span className="value">{vitals.temperature.toFixed(1)}°C</span>
+                  <span className="value">{vitals.tempC.toFixed(1)}°C</span>
                 </div>
               </div>
-              <div className="updated">Updated {vitals.updatedAt}</div>
+              <div className="updated">Updated {updatedLabel}</div>
             </div>
           ) : null}
           {!isVentilatorPanel(panel) && !isMonitorPanel(panel) ? (

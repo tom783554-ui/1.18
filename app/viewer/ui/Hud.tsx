@@ -5,6 +5,7 @@ import type { Engine, Scene } from "@babylonjs/core";
 import { onPick, type M3DPickDetail } from "../interactions/m3dEvents";
 import { onHotspotRegistry, type M3DHotspotRegistry } from "../interactions/hotspotRegistryEvents";
 import { onScenarioVitals, type ScenarioVitals } from "../scenario/scenarioEngine";
+import { useEngineState } from "../../../src/engine/useEngineState";
 
 type HudProps = {
   engine: Engine | null;
@@ -21,6 +22,7 @@ export default function Hud({ engine, scene, placeholderCount }: HudProps) {
   const [lastPick, setLastPick] = useState<M3DPickDetail | null>(null);
   const [registry, setRegistry] = useState<M3DHotspotRegistry | null>(null);
   const [vitals, setVitals] = useState<ScenarioVitals | null>(null);
+  const engineState = useEngineState();
 
   useEffect(() => onPick((detail) => setLastPick(detail)), []);
   useEffect(() => onHotspotRegistry((newRegistry) => setRegistry(newRegistry)), []);
@@ -86,6 +88,10 @@ export default function Hud({ engine, scene, placeholderCount }: HudProps) {
         <div>Triangles: {triangles}</div>
         <div>Placeholders: {placeholderCount ?? 0}</div>
         <div>Last: {lastPick ? `${lastPick.prefix}${lastPick.id}` : "—"}</div>
+        <div>Vent: {engineState.devices.ventOn ? "ON" : "OFF"}</div>
+        <div>
+          SpO2: {engineState.vitals.spo2Pct.toFixed(1)} HR: {Math.round(engineState.vitals.hrBpm)}
+        </div>
         <div className="hotspot-row">
           <span>Hotspots: {hotspotsCount}</span>
           <div className="hotspot-actions">

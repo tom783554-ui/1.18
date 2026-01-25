@@ -13,6 +13,7 @@ import {
 } from "@babylonjs/core";
 import type { AdvancedDynamicTexture } from "@babylonjs/gui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startEngineLoop, stopEngineLoop } from "../../src/engine/store";
 import { createEngine } from "./engine/createEngine";
 import { attachHotspotSystem, type HotspotEntry } from "./interactions/hotspotSystem";
 import { configureCamera, createScene } from "./scene/createScene";
@@ -86,16 +87,6 @@ export default function Viewer() {
   const [shareGlbParam, setShareGlbParam] = useState<string | null>(null);
   const [placeholderCount, setPlaceholderCount] = useState(0);
   const [panel, setPanel] = useState<{ title: string; id: string } | null>(null);
-  const [ventilatorOn, setVentilatorOn] = useState(false);
-  const [vitals, setVitals] = useState({
-    heartRate: 78,
-    spo2: 98,
-    respRate: 16,
-    systolic: 118,
-    diastolic: 76,
-    temperature: 36.8,
-    updatedAt: "just now"
-  });
   const [debugEnabled, setDebugEnabled] = useState(false);
   const [debugInfo, setDebugInfo] = useState<{ lastHotspotId: string; lastPickMeshName: string }>({
     lastHotspotId: "none",
@@ -432,28 +423,10 @@ export default function Viewer() {
   }, []);
 
   useEffect(() => {
-    const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-    const tick = () => {
-      setVitals((prev) => {
-        const nextHeart = clamp(Math.round(prev.heartRate + (Math.random() * 4 - 2)), 68, 96);
-        const nextSpo2 = clamp(Math.round(prev.spo2 + (Math.random() * 2 - 1)), 94, 100);
-        const nextResp = clamp(Math.round(prev.respRate + (Math.random() * 2 - 1)), 12, 20);
-        const nextSys = clamp(Math.round(prev.systolic + (Math.random() * 4 - 2)), 110, 130);
-        const nextDia = clamp(Math.round(prev.diastolic + (Math.random() * 3 - 1.5)), 70, 85);
-        const nextTemp = clamp(Number((prev.temperature + (Math.random() * 0.2 - 0.1)).toFixed(1)), 36.4, 37.4);
-        return {
-          heartRate: nextHeart,
-          spo2: nextSpo2,
-          respRate: nextResp,
-          systolic: nextSys,
-          diastolic: nextDia,
-          temperature: nextTemp,
-          updatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-        };
-      });
+    startEngineLoop();
+    return () => {
+      stopEngineLoop();
     };
-    const interval = window.setInterval(tick, 2000);
-    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -589,13 +562,7 @@ export default function Viewer() {
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
       <Hud engine={engineRef.current} scene={sceneRef.current} placeholderCount={placeholderCount} />
-      <Panels
-        panel={panel}
-        onClose={clearSelection}
-        ventilatorOn={ventilatorOn}
-        onVentilatorToggle={setVentilatorOn}
-        vitals={vitals}
-      />
+      <Panels panel={panel} onClose={clearSelection} />
       <ZoomTestOverlay
         scene={sceneRef.current}
         camera={cameraRef.current}
