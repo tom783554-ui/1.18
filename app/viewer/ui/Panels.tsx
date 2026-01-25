@@ -1,6 +1,6 @@
 "use client";
 
-import { applyBvm, setFio2, setVentOn } from "../../../src/engine/store";
+import { applyBvm, applyDefibShock, setDefibCharged, setFio2, setVentOn } from "../../../src/engine/store";
 import { useEngineState } from "../../../src/engine/useEngineState";
 import scenario from "../../../src/engine/scenarios/respFailure.json";
 
@@ -29,6 +29,15 @@ const isMonitorPanel = (panel: PanelState) => {
   return id.includes("monitor") || title.includes("monitor");
 };
 
+const isCrashCartPanel = (panel: PanelState) => {
+  if (!panel) {
+    return false;
+  }
+  const id = panel.id.toLowerCase();
+  const title = panel.title.toLowerCase();
+  return id.includes("crash") || id.includes("cart") || title.includes("crash") || title.includes("cart");
+};
+
 const scenarioConfig = scenario as typeof scenario;
 
 export default function Panels({ panel, onClose }: PanelsProps) {
@@ -39,6 +48,9 @@ export default function Panels({ panel, onClose }: PanelsProps) {
   const maxFio2 = scenarioConfig.fio2Effect.max;
   const fio2MinPct = Math.round(minFio2 * 100);
   const fio2MaxPct = Math.round(maxFio2 * 100);
+  const defibReady = engineState.defibCharged;
+  const lastShockSec =
+    engineState.defibShockAtSec !== null ? Math.max(0, engineState.timeSec - engineState.defibShockAtSec) : null;
 
   if (!panel) {
     return null;
@@ -136,7 +148,40 @@ export default function Panels({ panel, onClose }: PanelsProps) {
               <div className="updated">Elapsed {Math.round(timeSec)}s</div>
             </div>
           ) : null}
-          {!isVentilatorPanel(panel) && !isMonitorPanel(panel) ? (
+          {isCrashCartPanel(panel) ? (
+            <div className="section">
+              <div className="section-title">Crash Cart</div>
+              <div className="status-row">
+                <span>Defibrillator</span>
+                <span className={defibReady ? "status on" : "status off"}>
+                  {defibReady ? "Charged" : "Standby"}
+                </span>
+              </div>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className={defibReady ? "action active" : "action"}
+                  onClick={() => setDefibCharged(!defibReady)}
+                >
+                  {defibReady ? "Disarm" : "Charge"}
+                </button>
+                <button
+                  type="button"
+                  className="action"
+                  onClick={() => applyDefibShock()}
+                  disabled={!defibReady}
+                >
+                  Deliver Shock
+                </button>
+              </div>
+              <div className="note">
+                {lastShockSec === null
+                  ? "No shocks delivered yet."
+                  : `Last shock ${Math.round(lastShockSec)}s ago.`}
+              </div>
+            </div>
+          ) : null}
+          {!isVentilatorPanel(panel) && !isMonitorPanel(panel) && !isCrashCartPanel(panel) ? (
             <div className="hint">Tap another label to switch. Tap empty space to deselect.</div>
           ) : (
             <div className="hint subtle">Tap empty space to return to the room.</div>
@@ -274,6 +319,10 @@ export default function Panels({ panel, onClose }: PanelsProps) {
           padding: 8px 10px;
           border-radius: 10px;
           cursor: pointer;
+        }
+        .action:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
         }
         .action.bvm {
           border-color: rgba(248, 113, 113, 0.6);

@@ -266,7 +266,8 @@ const createTestHotspots = (scene: Scene, camera: Camera): TransformNode[] => {
     { id: "Suction", label: "Suction Regulator", offset: new Vector3(0.32, 0.22, -0.04) },
     { id: "IVPump", label: "IV Pump", offset: new Vector3(0.18, 0.05, 0.1) },
     { id: "Oxygen", label: "Oxygen Flow", offset: new Vector3(0.46, -0.08, -0.08) },
-    { id: "BedRail", label: "Bed Rail", offset: new Vector3(-0.2, -0.18, -0.12) }
+    { id: "BedRail", label: "Bed Rail", offset: new Vector3(-0.2, -0.18, -0.12) },
+    { id: "CrashCart", label: "Crash Cart", offset: new Vector3(0.52, 0.12, 0.2) }
   ];
 
   const nodes: TransformNode[] = [];

@@ -24,6 +24,8 @@ export class Engine {
       fio2: scenarioConfig.fio2Effect.min,
       bvmActive: false,
       bvmBoostUntil: null,
+      defibCharged: false,
+      defibShockAtSec: null,
       alerts: [],
       objectives: createInitialObjectives(scenarioConfig)
     };
@@ -89,10 +91,49 @@ export class Engine {
     };
   }
 
+  setDefibCharged(charged: boolean) {
+    if (this.state.defibCharged === charged) {
+      return;
+    }
+    const nextState = {
+      ...this.state,
+      defibCharged: charged
+    };
+    this.state = {
+      ...nextState,
+      objectives: updateObjectives(nextState, scenarioConfig, 0),
+      alerts: deriveAlerts(nextState, scenarioConfig)
+    };
+  }
+
+  applyDefibShock() {
+    if (!this.state.defibCharged) {
+      return;
+    }
+    const nextState = {
+      ...this.state,
+      defibCharged: false,
+      defibShockAtSec: this.state.timeSec,
+      hr: scenarioConfig.baseline.hr,
+      map: scenarioConfig.baseline.map
+    };
+    this.state = {
+      ...nextState,
+      objectives: updateObjectives(nextState, scenarioConfig, 0),
+      alerts: deriveAlerts(nextState, scenarioConfig)
+    };
+  }
+
   tick(dtSec: number) {
     const updated = updatePatient(this.state, dtSec, scenarioConfig);
+    const shockWindowSec = 12;
+    const defibShockAtSec =
+      updated.defibShockAtSec !== null && updated.timeSec - updated.defibShockAtSec > shockWindowSec
+        ? null
+        : updated.defibShockAtSec;
     const withObjectives = {
       ...updated,
+      defibShockAtSec,
       objectives: updateObjectives(updated, scenarioConfig, dtSec)
     };
     this.state = {
