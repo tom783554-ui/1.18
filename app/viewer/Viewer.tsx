@@ -12,19 +12,18 @@ import {
   Vector3
 } from "@babylonjs/core";
 import type { AdvancedDynamicTexture } from "@babylonjs/gui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { startEngineLoop, stopEngineLoop } from "../../src/engine/store";
 import { createEngine } from "./engine/createEngine";
 import { attachHotspotSystem, type HotspotMeshEntry } from "./interactions/hotspotSystem";
 import { buildCodeBlueHotspotEntries } from "../../src/sim/codeblue/buildCodeBlueHotspotEntries";
 import { expandCompactManifest } from "../../src/sim/codeblue/expandCompactManifest";
-import { configureCamera, createScene } from "./scene/createScene";
+import { createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import { getM3dDebugState, setM3dReady } from "./utils/m3dDebug";
 import Hud from "./ui/Hud";
 import LoadingOverlay from "./ui/LoadingOverlay";
 import Panels from "./ui/Panels";
-import ZoomTestOverlay from "./ui/ZoomTestOverlay";
 
 const READY_FLASH_MS = 900;
 const IDLE_FREEZE_MS = 2000;
@@ -47,19 +46,6 @@ const isValidHttpsUrl = (value: string | null) => {
   }
 };
 
-const formatShareUrl = (glbUrl: string | null) => {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  const base = `${window.location.origin}${window.location.pathname}`;
-  if (glbUrl) {
-    const share = new URL(base);
-    share.searchParams.set("glb", glbUrl);
-    return share.toString();
-  }
-  return base;
-};
-
 export default function Viewer() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
@@ -77,7 +63,6 @@ export default function Viewer() {
   const cleanupScalingRef = useRef<(() => void) | undefined>();
   const placeholderCleanupRef = useRef<(() => void) | null>(null);
   const actionRouterCleanupRef = useRef<(() => void) | null>(null);
-  const isNormalizedRef = useRef(false);
   const resizeRafRef = useRef<number | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -86,7 +71,6 @@ export default function Viewer() {
   const [missingMain, setMissingMain] = useState(false);
   const [missingMainDetails, setMissingMainDetails] = useState<string | null>(null);
   const [error, setError] = useState<{ title: string; details?: string } | null>(null);
-  const [shareGlbParam, setShareGlbParam] = useState<string | null>(null);
   const [placeholderCount, setPlaceholderCount] = useState(0);
   const [panel, setPanel] = useState<{ title: string; id: string } | null>(null);
   const [debugEnabled, setDebugEnabled] = useState(false);
@@ -95,7 +79,6 @@ export default function Viewer() {
     lastPickMeshName: "none"
   });
 
-  const shareUrl = useMemo(() => formatShareUrl(shareGlbParam), [shareGlbParam]);
 
   const clearIdleTimer = () => {
     if (idleTimer.current) {
@@ -139,12 +122,6 @@ export default function Viewer() {
     highlightLayerRef.current?.removeAllMeshes();
   }, []);
 
-  const handleReset = useCallback(() => {
-    resetCamera();
-    clearSelection();
-    markInteraction();
-  }, [clearSelection, markInteraction, resetCamera]);
-
   const reframeScene = useCallback(() => {
     const scene = sceneRef.current;
     const camera = cameraRef.current;
@@ -174,7 +151,21 @@ export default function Viewer() {
     }
 
     if (!min || !max) {
-      return;
+      const nodes = scene.transformNodes.filter((node) => {
+        const name = node.name.toLowerCase();
+        return name !== "camera" && name !== "hemi";
+      });
+      for (const node of nodes) {
+        const position = node.getAbsolutePosition?.() ?? node.position;
+        if (!position) {
+          continue;
+        }
+        min = min ? Vector3.Minimize(min, position) : position.clone();
+        max = max ? Vector3.Maximize(max, position) : position.clone();
+      }
+      if (!min || !max) {
+        return;
+      }
     }
 
     const center = min.add(max).scale(0.5);
@@ -195,54 +186,54 @@ export default function Viewer() {
     };
   }, []);
 
-  const handleRecenter = useCallback(() => {
-    reframeScene();
-    markInteraction();
-  }, [markInteraction, reframeScene]);
-
-  const adjustZoom = useCallback((direction: 1 | -1) => {
-    const camera = cameraRef.current;
-    if (!camera) {
-      return;
-    }
-    const step = Math.max(camera.radius * 0.1, 0.02);
-    const nextRadius = camera.radius + step * direction;
-    const lowerLimit = camera.lowerRadiusLimit ?? 0;
-    const upperLimit = camera.upperRadiusLimit ?? nextRadius;
-    camera.radius = Math.min(Math.max(nextRadius, lowerLimit), upperLimit);
-    markInteraction();
-  }, [markInteraction]);
-
-  const handleZoomIn = useCallback(() => adjustZoom(-1), [adjustZoom]);
-  const handleZoomOut = useCallback(() => adjustZoom(1), [adjustZoom]);
-
-  const handleResetLimits = useCallback(() => {
-    const camera = cameraRef.current;
-    const canvas = canvasRef.current;
-    if (!camera || !canvas) {
-      return;
-    }
-    configureCamera(camera, canvas);
-    const lowerLimit = camera.lowerRadiusLimit ?? 0;
-    const upperLimit = camera.upperRadiusLimit ?? camera.radius;
-    camera.radius = Math.min(Math.max(camera.radius, lowerLimit), upperLimit);
-    markInteraction();
-  }, [markInteraction]);
-
-  const handleNormalizeGlb = useCallback(() => {
+  const removeCeilingAndWall = useCallback(() => {
     const scene = sceneRef.current;
-    if (!scene || isNormalizedRef.current) {
+    if (!scene) {
       return;
     }
-    const roots = scene.meshes.filter((mesh) => !mesh.parent);
-    roots.forEach((mesh) => {
-      mesh.scaling = mesh.scaling.scale(0.01);
-      mesh.computeWorldMatrix(true);
+    let wallHidden = false;
+    scene.meshes.forEach((mesh) => {
+      const name = mesh.name.toLowerCase();
+      if (name.includes("ceiling")) {
+        mesh.setEnabled(false);
+        return;
+      }
+      if (!wallHidden && name.includes("wall")) {
+        mesh.setEnabled(false);
+        wallHidden = true;
+      }
     });
-    isNormalizedRef.current = true;
-    reframeScene();
-    markInteraction();
-  }, [markInteraction, reframeScene]);
+  }, []);
+
+  const focusCameraAtBed = useCallback(() => {
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!scene || !camera) {
+      return;
+    }
+    const bedMesh = scene.meshes.find((mesh) => mesh.name.toLowerCase().includes("bed"));
+    if (!bedMesh) {
+      return;
+    }
+    bedMesh.computeWorldMatrix(true);
+    const bounds = bedMesh.getBoundingInfo?.();
+    if (!bounds) {
+      return;
+    }
+    const center = bounds.boundingBox.centerWorld.clone();
+    const size = bounds.boundingBox.maximumWorld.subtract(bounds.boundingBox.minimumWorld);
+    const length = Math.max(size.x, size.z);
+    const height = Math.max(0.6, size.y * 0.6);
+    const offset = new Vector3(0, height, -length * 1.4);
+    camera.setTarget(center);
+    camera.setPosition(center.add(offset));
+    cameraDefaults.current = {
+      alpha: camera.alpha,
+      beta: camera.beta,
+      radius: camera.radius,
+      target: [camera.target.x, camera.target.y, camera.target.z]
+    };
+  }, []);
 
   const normalizeScene = useCallback(() => {
     const scene = sceneRef.current;
@@ -306,19 +297,9 @@ export default function Viewer() {
     scene.freezeActiveMeshes();
   }, []);
 
-  const copyShareLink = useCallback(async () => {
-    if (!shareUrl) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-    } catch {
-      window.prompt("Copy share link", shareUrl);
-    }
-  }, [shareUrl]);
 
   const loadScene = useCallback(
-    async (url: string, isDefault: boolean, shareParam?: string | null) => {
+    async (url: string, isDefault: boolean) => {
       const scene = sceneRef.current;
       if (!scene) {
         return;
@@ -358,6 +339,7 @@ export default function Viewer() {
         await loadMainGlb(scene, url, (update) => setProgress({ ...update }));
         await scene.whenReadyAsync();
         setM3dReady(true);
+        removeCeilingAndWall();
         const { wirePlaceholders } = await import("./interactions/placeholders");
         const wired = wirePlaceholders(scene);
         placeholderCleanupRef.current = wired.dispose;
@@ -374,7 +356,8 @@ export default function Viewer() {
           camera: scene.activeCamera
         }) as () => void;
         hotspotSystemRef.current?.refresh();
-        setShareGlbParam(isDefault ? null : shareParam ?? null);
+        reframeScene();
+        focusCameraAtBed();
         setIsLoading(false);
         flashReady();
         armIdleFreeze();
@@ -391,7 +374,7 @@ export default function Viewer() {
         setIsLoading(false);
       }
     },
-    [armIdleFreeze, normalizeScene, reframeScene]
+    [armIdleFreeze, focusCameraAtBed, normalizeScene, reframeScene, removeCeilingAndWall]
   );
 
   const handleFilePick = useCallback(
@@ -401,7 +384,6 @@ export default function Viewer() {
       }
       const objectUrl = URL.createObjectURL(file);
       objectUrlRef.current = objectUrl;
-      setShareGlbParam(null);
       void loadScene(objectUrl, false);
     },
     [loadScene]
@@ -536,7 +518,7 @@ export default function Viewer() {
     const urlParam = params.get("glb");
     const shouldUseRemote = isValidHttpsUrl(urlParam) ? urlParam : null;
 
-    void loadScene(shouldUseRemote ?? DEFAULT_GLB_PATH, !shouldUseRemote, shouldUseRemote);
+    void loadScene(shouldUseRemote ?? DEFAULT_GLB_PATH, !shouldUseRemote);
 
     return () => {
       clearIdleTimer();
@@ -575,15 +557,6 @@ export default function Viewer() {
       <canvas ref={canvasRef} className="canvas" />
       <Hud placeholderCount={placeholderCount} />
       <Panels panel={panel} onClose={clearSelection} />
-      <ZoomTestOverlay
-        scene={sceneRef.current}
-        camera={cameraRef.current}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onRecenter={handleRecenter}
-        onResetLimits={handleResetLimits}
-        onNormalize={handleNormalizeGlb}
-      />
       {debugEnabled ? (
         <div className="debug-hud" role="status" aria-live="polite">
           <div>debug: on</div>
@@ -591,14 +564,6 @@ export default function Viewer() {
           <div>lastPick: {debugInfo.lastPickMeshName || "none"}</div>
         </div>
       ) : null}
-      <div className="control-bar" role="toolbar" aria-label="Viewer controls">
-        <button type="button" onClick={handleReset}>
-          Reset
-        </button>
-        <button type="button" onClick={copyShareLink}>
-          Share
-        </button>
-      </div>
       {missingMain ? (
         <div className="banner" role="status">
           <strong>missing main.glb</strong>
@@ -648,32 +613,6 @@ export default function Viewer() {
         .banner span {
           color: rgba(255, 255, 255, 0.9);
           font-weight: 500;
-        }
-        .control-bar {
-          position: absolute;
-          top: 12px;
-          left: 12px;
-          z-index: 8;
-          display: inline-flex;
-          gap: 8px;
-          padding: 6px;
-          border-radius: 10px;
-          background: rgba(12, 12, 12, 0.65);
-          backdrop-filter: blur(6px);
-        }
-        .control-bar button {
-          appearance: none;
-          border: 1px solid rgba(255, 255, 255, 0.18);
-          background: rgba(255, 255, 255, 0.08);
-          color: #fff;
-          font-size: 12px;
-          font-weight: 600;
-          padding: 6px 10px;
-          border-radius: 8px;
-          cursor: pointer;
-        }
-        .control-bar button:hover {
-          background: rgba(255, 255, 255, 0.16);
         }
         .debug-hud {
           position: absolute;
