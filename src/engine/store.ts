@@ -37,6 +37,16 @@ export const applyBvm = () => {
   notify();
 };
 
+export const setDefibCharged = (charged: boolean) => {
+  engine.setDefibCharged(charged);
+  notify();
+};
+
+export const applyDefibShock = () => {
+  engine.applyDefibShock();
+  notify();
+};
+
 export const startEngineLoop = () => {
   if (loopTimer !== null || typeof window === "undefined") {
     return;

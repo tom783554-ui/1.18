@@ -30,6 +30,8 @@ export interface PatientState {
   fio2: number;
   bvmActive: boolean;
   bvmBoostUntil: number | null;
+  defibCharged: boolean;
+  defibShockAtSec: number | null;
 
   alerts: Alert[];
   objectives: Objective[];

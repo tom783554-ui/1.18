@@ -13,6 +13,22 @@ export const deriveAlerts = (state: PatientState, scenario: ScenarioConfig): Pat
     });
   }
 
+  if (state.defibCharged) {
+    alerts.push({
+      id: "defib-charged",
+      label: "Defibrillator charged",
+      severity: AlertSeverity.INFO
+    });
+  }
+
+  if (state.defibShockAtSec !== null && state.timeSec - state.defibShockAtSec <= 12) {
+    alerts.push({
+      id: "defib-shock",
+      label: "Defibrillation delivered",
+      severity: AlertSeverity.INFO
+    });
+  }
+
   if (state.bvmActive) {
     alerts.push({
       id: "bvm-active",
