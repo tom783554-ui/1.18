@@ -561,7 +561,7 @@ export default function Viewer() {
   return (
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
-      <Hud engine={engineRef.current} scene={sceneRef.current} placeholderCount={placeholderCount} />
+      <Hud placeholderCount={placeholderCount} />
       <Panels panel={panel} onClose={clearSelection} />
       <ZoomTestOverlay
         scene={sceneRef.current}

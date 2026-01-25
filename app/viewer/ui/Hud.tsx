@@ -1,250 +1,427 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { Engine, Scene } from "@babylonjs/core";
-import { onPick, type M3DPickDetail } from "../interactions/m3dEvents";
-import { onHotspotRegistry, type M3DHotspotRegistry } from "../interactions/hotspotRegistryEvents";
-import { onScenarioVitals, type ScenarioVitals } from "../scenario/scenarioEngine";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useSyncExternalStore } from "react";
+import {
+  getHotspotProjection,
+  subscribeHotspotProjection
+} from "../interactions/hotspotProjectionStore";
 import { useEngineState } from "../../../src/engine/useEngineState";
 
 type HudProps = {
-  engine: Engine | null;
-  scene: Scene | null;
   placeholderCount?: number;
 };
 
-const updateIntervalMs = 400;
+const formatElapsed = (tSec: number) => {
+  const total = Math.max(0, Math.floor(tSec));
+  const minutes = Math.floor(total / 60)
+    .toString()
+    .padStart(2, "0");
+  const seconds = (total % 60).toString().padStart(2, "0");
+  return `${minutes}:${seconds}`;
+};
 
-export default function Hud({ engine, scene, placeholderCount }: HudProps) {
-  const [fps, setFps] = useState(0);
-  const [meshes, setMeshes] = useState(0);
-  const [triangles, setTriangles] = useState(0);
-  const [lastPick, setLastPick] = useState<M3DPickDetail | null>(null);
-  const [registry, setRegistry] = useState<M3DHotspotRegistry | null>(null);
-  const [vitals, setVitals] = useState<ScenarioVitals | null>(null);
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+export default function Hud({ placeholderCount }: HudProps) {
   const engineState = useEngineState();
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [anchor, setAnchor] = useState({ x: 0, y: 0 });
+  const alertAnchorRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => onPick((detail) => setLastPick(detail)), []);
-  useEffect(() => onHotspotRegistry((newRegistry) => setRegistry(newRegistry)), []);
-  useEffect(() => onScenarioVitals((nextVitals) => setVitals(nextVitals)), []);
+  const projection = useSyncExternalStore(
+    subscribeHotspotProjection,
+    getHotspotProjection,
+    getHotspotProjection
+  );
 
   useEffect(() => {
-    if (!engine || !scene) {
+    if (typeof window === "undefined") {
       return;
     }
-
-    const update = () => {
-      setFps(Math.round(engine.getFps()));
-      setMeshes(scene.meshes.length);
-      const vertices = scene.getTotalVertices();
-      setTriangles(Math.round(vertices / 3));
-    };
-
-    update();
-    const interval = setInterval(update, updateIntervalMs);
-    return () => clearInterval(interval);
-  }, [engine, scene]);
-
-  const registryJson = useMemo(() => (registry ? JSON.stringify(registry, null, 2) : ""), [registry]);
-
-  const copyRegistry = async () => {
-    if (!registryJson) return;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(registryJson);
-        return;
+    const handleResize = () => {
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+      const element = alertAnchorRef.current;
+      if (element) {
+        const rect = element.getBoundingClientRect();
+        setAnchor({ x: rect.right, y: rect.top + rect.height / 2 });
       }
-      throw new Error("clipboard unavailable");
-    } catch {
-      window.prompt("Copy hotspot registry JSON", registryJson);
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useLayoutEffect(() => {
+    const element = alertAnchorRef.current;
+    if (!element) {
+      return;
     }
+    const rect = element.getBoundingClientRect();
+    setAnchor({ x: rect.right, y: rect.top + rect.height / 2 });
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      const rect = element.getBoundingClientRect();
+      setAnchor({ x: rect.right, y: rect.top + rect.height / 2 });
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const map = useMemo(() => {
+    const { bpSys, bpDia } = engineState.vitals;
+    return Math.round((bpSys + 2 * bpDia) / 3);
+  }, [engineState.vitals]);
+
+  const alerts = useMemo(() => {
+    const { vitals, devices } = engineState;
+    const list: { id: string; label: string; tone: "danger" | "warn" | "info" }[] = [];
+    if (!devices.ventOn) {
+      list.push({ id: "vent-off", label: "Ventilator off", tone: "danger" });
+    }
+    if (vitals.spo2Pct < 92) {
+      list.push({ id: "spo2-low", label: "SpO₂ low", tone: "danger" });
+    } else if (vitals.spo2Pct < 95) {
+      list.push({ id: "spo2-watch", label: "SpO₂ watch", tone: "warn" });
+    }
+    if (vitals.hrBpm > 110) {
+      list.push({ id: "hr-high", label: "HR elevated", tone: "warn" });
+    }
+    if (vitals.respRpm > 20) {
+      list.push({ id: "rr-high", label: "RR elevated", tone: "warn" });
+    }
+    if (list.length === 0) {
+      list.push({ id: "stable", label: "No active alerts", tone: "info" });
+    }
+    return list;
+  }, [engineState]);
+
+  const objectives = useMemo(() => {
+    const { vitals, devices } = engineState;
+    return [
+      { id: "vent", label: "Ventilator running", done: devices.ventOn },
+      { id: "spo2", label: "Maintain SpO₂ ≥ 95%", done: vitals.spo2Pct >= 95 },
+      { id: "hr", label: "Stabilize HR 60–100", done: vitals.hrBpm >= 60 && vitals.hrBpm <= 100 }
+    ];
+  }, [engineState]);
+
+  const openMonitorPanel = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent("m3d:panel", { detail: { open: true, title: "Monitor", id: "monitor" } })
+    );
   };
 
-  const downloadRegistry = () => {
-    if (!registryJson) return;
-    try {
-      const blob = new Blob([registryJson], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "hotspots.json";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-    } catch {
-      window.prompt("Download hotspot registry JSON", registryJson);
-    }
-  };
-
-  const hotspotsCount = registry?.count ?? 0;
-  const bp = vitals ? `${vitals.bpSys}/${vitals.bpDia}` : "--";
+  const hasSelection = Boolean(projection.id && projection.visible);
+  const clampedX = clamp(projection.x, 0, viewport.width);
+  const clampedY = clamp(projection.y, 0, viewport.height);
 
   return (
     <div className="hud-root">
-      <div className="hud">
-        <div>FPS: {fps}</div>
-        <div>Meshes: {meshes}</div>
-        <div>Triangles: {triangles}</div>
-        <div>Placeholders: {placeholderCount ?? 0}</div>
-        <div>Last: {lastPick ? `${lastPick.prefix}${lastPick.id}` : "—"}</div>
-        <div>Vent: {engineState.devices.ventOn ? "ON" : "OFF"}</div>
-        <div>
-          SpO2: {engineState.vitals.spo2Pct.toFixed(1)} HR: {Math.round(engineState.vitals.hrBpm)}
+      <div className="hud-top">
+        <div className="hud-scenario">
+          <div className="scenario-label">Scenario</div>
+          <div className="scenario-name">Ventilation Sync</div>
         </div>
-        <div className="hotspot-row">
-          <span>Hotspots: {hotspotsCount}</span>
-          <div className="hotspot-actions">
-            <button type="button" onClick={copyRegistry} disabled={!registryJson}>
-              Copy
-            </button>
-            <button type="button" onClick={downloadRegistry} disabled={!registryJson}>
-              Download
-            </button>
-          </div>
-        </div>
-      </div>
-      <div className="vitals" role="status" aria-live="polite">
-        <div className="vitals-title">Scenario Vitals</div>
-        <div className="vitals-grid">
-          <div className="vital">
+        <div className="hud-topbar">
+          <div className="metric">
             <span>HR</span>
-            <strong>{vitals?.hr ?? "--"}</strong>
-            <em>bpm</em>
+            <strong>{Math.round(engineState.vitals.hrBpm)}</strong>
           </div>
-          <div className="vital">
-            <span>BP</span>
-            <strong>{bp}</strong>
-            <em>mmHg</em>
+          <div className="metric">
+            <span>MAP</span>
+            <strong>{map}</strong>
           </div>
-          <div className="vital">
-            <span>SpO2</span>
-            <strong>{vitals?.spo2 ?? "--"}</strong>
-            <em>%</em>
+          <div className="metric">
+            <span>SpO₂</span>
+            <strong>{engineState.vitals.spo2Pct.toFixed(1)}</strong>
           </div>
-          <div className="vital">
+          <div className="metric">
             <span>RR</span>
-            <strong>{vitals?.rr ?? "--"}</strong>
-            <em>/min</em>
-          </div>
-          <div className="vital">
-            <span>Temp</span>
-            <strong>{vitals ? vitals.temp.toFixed(1) : "--"}</strong>
-            <em>°C</em>
-          </div>
-          <div className="vital">
-            <span>FiO2</span>
-            <strong>{vitals ? vitals.fio2.toFixed(2) : "--"}</strong>
-          </div>
-          <div className="vital">
-            <span>PEEP</span>
-            <strong>{vitals ? vitals.peep.toFixed(1) : "--"}</strong>
-            <em>cmH₂O</em>
-          </div>
-          <div className="vital">
-            <span>Mode</span>
-            <strong>{vitals?.mode ?? "--"}</strong>
+            <strong>{Math.round(engineState.vitals.respRpm)}</strong>
           </div>
         </div>
+        <div className="hud-time">
+          <div className="elapsed-label">Elapsed</div>
+          <div className="elapsed">{formatElapsed(engineState.tSec)}</div>
+        </div>
       </div>
+
+      <div className="hud-side">
+        <div className="alerts" ref={alertAnchorRef}>
+          <div className="section-title">Alerts</div>
+          <div
+            className="pill-stack"
+            role="button"
+            tabIndex={0}
+            onClick={openMonitorPanel}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openMonitorPanel();
+              }
+            }}
+          >
+            {alerts.map((alert) => (
+              <span key={alert.id} className={`pill ${alert.tone}`}>
+                {alert.label}
+              </span>
+            ))}
+            <span className="pill action">Open monitor</span>
+          </div>
+        </div>
+        <div className="objectives">
+          <div className="section-title">Objectives</div>
+          <ul>
+            {objectives.map((objective) => (
+              <li key={objective.id} className={objective.done ? "done" : ""}>
+                <span className="checkbox" aria-hidden="true">
+                  {objective.done ? "✓" : "○"}
+                </span>
+                <span>{objective.label}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="hud-footer">
+        <div className="status-chip">
+          <span className="label">Vent</span>
+          <span className={engineState.devices.ventOn ? "value on" : "value off"}>
+            {engineState.devices.ventOn ? "ON" : "OFF"}
+          </span>
+        </div>
+        <div className="status-chip">
+          <span className="label">Placeholders</span>
+          <span className="value">{placeholderCount ?? 0}</span>
+        </div>
+      </div>
+
+      <svg className="callout" aria-hidden="true">
+        {hasSelection && (
+          <>
+            <line x1={anchor.x} y1={anchor.y} x2={clampedX} y2={clampedY} />
+            <circle cx={clampedX} cy={clampedY} r="5" />
+          </>
+        )}
+      </svg>
+
       <style jsx>{`
         .hud-root {
           position: absolute;
           inset: 0;
           pointer-events: none;
-          z-index: 5;
-        }
-        .hud {
-          position: absolute;
-          top: 12px;
-          right: 12px;
-          background: rgba(20, 20, 20, 0.7);
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          border-radius: 8px;
-          padding: 8px 10px;
-          font-size: 12px;
-          display: grid;
-          gap: 4px;
+          z-index: 8;
           color: #f8fafc;
+          font-family: "Inter", "SF Pro Text", system-ui, -apple-system, sans-serif;
+        }
+        .hud-top {
+          position: absolute;
+          top: 16px;
+          left: 16px;
+          right: 16px;
+          display: grid;
+          grid-template-columns: minmax(200px, 1fr) auto minmax(120px, 1fr);
+          gap: 12px;
+          align-items: center;
+          background: rgba(8, 10, 16, 0.75);
+          border: 1px solid rgba(148, 163, 184, 0.25);
+          border-radius: 14px;
+          padding: 10px 14px;
+          backdrop-filter: blur(10px);
+        }
+        .hud-scenario {
+          display: grid;
+          gap: 2px;
+          text-transform: uppercase;
+          letter-spacing: 0.12em;
+          font-size: 10px;
+          color: rgba(226, 232, 240, 0.7);
+        }
+        .scenario-name {
+          color: #f8fafc;
+          font-weight: 600;
+          letter-spacing: 0.08em;
+        }
+        .hud-topbar {
+          display: grid;
+          grid-auto-flow: column;
+          gap: 16px;
+          justify-content: center;
+        }
+        .metric {
+          display: grid;
+          justify-items: center;
+          gap: 2px;
+          font-size: 11px;
+          color: rgba(226, 232, 240, 0.8);
+        }
+        .metric strong {
+          font-size: 16px;
+          color: #f8fafc;
+        }
+        .hud-time {
+          justify-self: end;
+          text-align: right;
+          text-transform: uppercase;
+          letter-spacing: 0.12em;
+          font-size: 10px;
+          color: rgba(226, 232, 240, 0.7);
+        }
+        .elapsed {
+          font-size: 14px;
+          font-weight: 600;
+          color: #f8fafc;
+        }
+        .hud-side {
+          position: absolute;
+          top: 88px;
+          right: 16px;
+          display: grid;
+          gap: 12px;
+          width: 240px;
+        }
+        .alerts,
+        .objectives {
+          background: rgba(12, 16, 24, 0.78);
+          border: 1px solid rgba(148, 163, 184, 0.18);
+          border-radius: 12px;
+          padding: 10px 12px;
           pointer-events: auto;
         }
-        .hotspot-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
+        .section-title {
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.14em;
+          color: rgba(226, 232, 240, 0.6);
+          margin-bottom: 8px;
         }
-        .hotspot-actions {
-          display: flex;
+        .pill-stack {
+          display: grid;
           gap: 6px;
-        }
-        .hotspot-actions button {
-          background: rgba(148, 163, 184, 0.15);
-          border: 1px solid rgba(148, 163, 184, 0.3);
-          color: #e2e8f0;
-          border-radius: 6px;
-          padding: 2px 8px;
-          font-size: 11px;
           cursor: pointer;
         }
-        .hotspot-actions button:disabled {
-          opacity: 0.5;
-          cursor: default;
-        }
-        .vitals {
-          position: absolute;
-          left: 12px;
-          bottom: 12px;
-          background: rgba(12, 16, 24, 0.78);
-          border: 1px solid rgba(148, 163, 184, 0.2);
-          border-radius: 10px;
-          padding: 8px 10px;
-          color: #f8fafc;
-          min-width: 190px;
-          pointer-events: none;
-        }
-        .vitals-title {
+        .pill {
+          padding: 6px 10px;
+          border-radius: 999px;
           font-size: 11px;
           font-weight: 600;
           text-transform: uppercase;
           letter-spacing: 0.08em;
-          color: #cbd5f5;
-          margin-bottom: 6px;
+          background: rgba(148, 163, 184, 0.12);
+          border: 1px solid rgba(148, 163, 184, 0.25);
+          color: rgba(226, 232, 240, 0.8);
         }
-        .vitals-grid {
+        .pill.danger {
+          border-color: rgba(248, 113, 113, 0.6);
+          color: #fecaca;
+        }
+        .pill.warn {
+          border-color: rgba(251, 191, 36, 0.6);
+          color: #fde68a;
+        }
+        .pill.info {
+          border-color: rgba(56, 189, 248, 0.45);
+          color: #bae6fd;
+        }
+        .pill.action {
+          border-style: dashed;
+          color: rgba(248, 250, 252, 0.75);
+        }
+        .objectives ul {
+          list-style: none;
+          padding: 0;
+          margin: 0;
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 6px 12px;
+          gap: 8px;
+          font-size: 12px;
+          color: rgba(226, 232, 240, 0.85);
+        }
+        .objectives li {
+          display: grid;
+          grid-template-columns: 18px 1fr;
+          gap: 8px;
+          align-items: center;
+        }
+        .objectives li.done {
+          color: rgba(134, 239, 172, 0.9);
+        }
+        .checkbox {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 163, 184, 0.4);
           font-size: 11px;
         }
-        .vital {
+        .objectives li.done .checkbox {
+          border-color: rgba(134, 239, 172, 0.8);
+          color: rgba(134, 239, 172, 0.9);
+        }
+        .hud-footer {
+          position: absolute;
+          left: 16px;
+          bottom: 16px;
+          display: flex;
+          gap: 10px;
+        }
+        .status-chip {
           display: grid;
           gap: 2px;
-        }
-        .vital span {
-          color: #94a3b8;
+          background: rgba(8, 10, 16, 0.8);
+          border: 1px solid rgba(148, 163, 184, 0.2);
+          border-radius: 10px;
+          padding: 8px 10px;
           font-size: 10px;
           text-transform: uppercase;
-          letter-spacing: 0.06em;
+          letter-spacing: 0.12em;
+          color: rgba(226, 232, 240, 0.7);
         }
-        .vital strong {
+        .status-chip .value {
           font-size: 12px;
+          letter-spacing: 0.08em;
+          color: #f8fafc;
         }
-        .vital em {
-          font-style: normal;
-          font-size: 9px;
-          color: #94a3b8;
+        .status-chip .value.on {
+          color: #86efac;
         }
-        @media (max-width: 600px) {
-          .hud {
-            font-size: 11px;
+        .status-chip .value.off {
+          color: #fca5a5;
+        }
+        .callout {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          z-index: 6;
+        }
+        .callout line {
+          stroke: rgba(56, 189, 248, 0.85);
+          stroke-width: 2;
+        }
+        .callout circle {
+          fill: rgba(56, 189, 248, 0.9);
+          stroke: rgba(14, 116, 144, 0.9);
+          stroke-width: 2;
+        }
+        @media (max-width: 900px) {
+          .hud-top {
+            grid-template-columns: 1fr;
+            gap: 8px;
+            text-align: center;
           }
-          .vitals {
-            min-width: 200px;
+          .hud-time {
+            justify-self: center;
           }
-          .vitals-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 6px 12px;
+          .hud-side {
+            right: 12px;
+            width: 210px;
           }
         }
       `}</style>

@@ -21,6 +21,11 @@ import {
 } from "@babylonjs/gui";
 import { emitPick } from "./m3dEvents";
 import { emitHotspotRegistry } from "./hotspotRegistryEvents";
+import {
+  clearHotspotProjection,
+  setHotspotProjection,
+  setHotspotSelection
+} from "./hotspotProjectionStore";
 import { getEngineState, subscribe } from "../../../src/engine/store";
 import type { Vitals } from "../../../src/engine/types";
 import { setM3dPick } from "../utils/m3dDebug";
@@ -83,6 +88,16 @@ const getNodePosition = (node: TransformNode | AbstractMesh) => {
     return node.getAbsolutePosition();
   }
   return node.position;
+};
+
+const getNodeWorldCenter = (node: TransformNode | AbstractMesh) => {
+  if (node instanceof AbstractMesh) {
+    const info = node.getBoundingInfo?.();
+    if (info) {
+      return info.boundingBox.centerWorld;
+    }
+  }
+  return getNodePosition(node);
 };
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -402,6 +417,9 @@ export function attachHotspotSystem({
 
   let lastPointer = { x: 0, y: 0 };
   let lastPick = "none";
+  let pingTarget: AbstractMesh | null = null;
+  let pingBaseScale: Vector3 | null = null;
+  let pingStartMs = 0;
 
   const updateHudVisibility = (visible: boolean) => {
     hud.marker.isVisible = visible;
@@ -415,6 +433,12 @@ export function attachHotspotSystem({
     updateHudVisibility(false);
     emitPanelClose();
     onDeselect?.();
+    clearHotspotProjection();
+    if (pingTarget && pingBaseScale) {
+      pingTarget.scaling.copyFrom(pingBaseScale);
+    }
+    pingTarget = null;
+    pingBaseScale = null;
   };
 
   const selectHotspot = (entry: HotspotEntry, pickedMesh?: AbstractMesh | null) => {
@@ -431,6 +455,16 @@ export function attachHotspotSystem({
     updateHudVisibility(true);
     emitPanelOpen(entry.label || entry.id, entry.id);
     setM3dPick(entry.id, pickedMesh?.name ?? entry.pickMesh.name);
+    setHotspotSelection({ id: entry.id, label: entry.label });
+    const pingMesh = highlightMesh ?? pickedMesh ?? entry.pickMesh;
+    if (pingMesh) {
+      if (pingTarget && pingBaseScale) {
+        pingTarget.scaling.copyFrom(pingBaseScale);
+      }
+      pingTarget = pingMesh;
+      pingBaseScale = pingMesh.scaling.clone();
+      pingStartMs = performance.now();
+    }
   };
 
   const resolveHotspotFromMesh = (mesh: AbstractMesh | null | undefined) => {
@@ -505,12 +539,14 @@ export function attachHotspotSystem({
     hud.details.height = isMonitor ? `${panelHeight - 48}px` : "92px";
     hud.details.paddingTopInPixels = isMonitor ? 40 : 44;
 
-    const worldPos = getNodePosition(selected.node);
+    const worldPos = getNodeWorldCenter(selected.node);
     const viewport = camera.viewport.toGlobal(width, height);
     const projected = Vector3.Project(worldPos, Matrix.Identity(), scene.getTransformMatrix(), viewport);
 
-    if (!Number.isFinite(projected.x) || projected.z < 0 || projected.z > 1) {
+    const projectionVisible = Number.isFinite(projected.x) && projected.z >= 0 && projected.z <= 1;
+    if (!projectionVisible) {
       updateHudVisibility(false);
+      setHotspotProjection({ x: 0, y: 0, visible: false });
       return;
     }
 
@@ -548,6 +584,7 @@ export function attachHotspotSystem({
       ].join("\n");
     }
     hud.debug.text = `lastPointer: ${Math.round(lastPointer.x)}, ${Math.round(lastPointer.y)}\nlastPick: ${lastPick}\nselected: ${selected.id}`;
+    setHotspotProjection({ x: projected.x, y: projected.y, visible: true });
   };
 
   const refresh = () => {
@@ -621,6 +658,21 @@ export function attachHotspotSystem({
 
   const beforeRenderObserver = scene.onBeforeRenderObservable.add(() => {
     updateHudLayout();
+    if (pingTarget && pingBaseScale) {
+      const elapsed = (performance.now() - pingStartMs) / 1000;
+      const duration = 1.2;
+      if (elapsed >= duration) {
+        pingTarget.scaling.copyFrom(pingBaseScale);
+        pingTarget = null;
+        pingBaseScale = null;
+      } else {
+        const intensity = 1 - elapsed / duration;
+        const pulse = Math.sin(elapsed * 8) * intensity;
+        const scale = 1 + 0.08 * pulse;
+        pingTarget.scaling.copyFrom(pingBaseScale);
+        pingTarget.scaling.scaleInPlace(scale);
+      }
+    }
   });
 
   return {
@@ -630,6 +682,7 @@ export function attachHotspotSystem({
       scene.onBeforeRenderObservable.remove(beforeRenderObserver);
       deselect();
       unsubscribeVitals();
+      clearHotspotProjection();
       createdColliders.splice(0).forEach((collider) => collider.dispose(false, true));
       testNodes.splice(0).forEach((node) => node.dispose(false, true));
       highlightLayer.dispose();
