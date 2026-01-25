@@ -21,6 +21,13 @@ let projection: ProjectionState = {
   visible: false,
   updatedAtMs: 0
 };
+let snapshot: HotspotProjectionSnapshot = {
+  id: null,
+  label: undefined,
+  x: 0,
+  y: 0,
+  visible: false
+};
 
 const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
@@ -35,13 +42,7 @@ export const subscribeHotspotProjection = (listener: () => void) => {
   };
 };
 
-export const getHotspotProjection = (): HotspotProjectionSnapshot => ({
-  id: selection.id,
-  label: selection.label,
-  x: projection.x,
-  y: projection.y,
-  visible: projection.visible
-});
+export const getHotspotProjection = (): HotspotProjectionSnapshot => snapshot;
 
 const shouldEmit = (next: HotspotProjectionSnapshot, atMs: number) => {
   if (next.id !== selection.id || next.visible !== projection.visible) {
@@ -64,6 +65,13 @@ export const setHotspotSelection = (next: { id: string; label?: string } | null)
     visible: false,
     updatedAtMs: nowMs()
   };
+  snapshot = {
+    id: projection.id,
+    label: projection.label,
+    x: projection.x,
+    y: projection.y,
+    visible: projection.visible
+  };
   notify();
 };
 
@@ -77,23 +85,37 @@ export const clearHotspotProjection = () => {
     visible: false,
     updatedAtMs: nowMs()
   };
+  snapshot = {
+    id: projection.id,
+    label: projection.label,
+    x: projection.x,
+    y: projection.y,
+    visible: projection.visible
+  };
   notify();
 };
 
 export const setHotspotProjection = (next: Omit<HotspotProjectionSnapshot, "id" | "label">) => {
   const atMs = nowMs();
-  const snapshot: HotspotProjectionSnapshot = {
+  const nextSnapshot: HotspotProjectionSnapshot = {
     id: selection.id,
     label: selection.label,
     x: next.x,
     y: next.y,
     visible: next.visible
   };
-  if (!shouldEmit(snapshot, atMs)) {
-    projection = { ...projection, ...snapshot, updatedAtMs: atMs };
+  if (!shouldEmit(nextSnapshot, atMs)) {
+    projection = { ...projection, ...nextSnapshot, updatedAtMs: atMs };
     return;
   }
-  projection = { ...snapshot, updatedAtMs: atMs };
+  projection = { ...nextSnapshot, updatedAtMs: atMs };
+  snapshot = {
+    id: projection.id,
+    label: projection.label,
+    x: projection.x,
+    y: projection.y,
+    visible: projection.visible
+  };
   lastEmitMs = atMs;
   notify();
 };
