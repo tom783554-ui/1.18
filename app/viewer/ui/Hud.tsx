@@ -8,6 +8,7 @@ import {
 } from "../interactions/hotspotProjectionStore";
 import { useEngineState } from "../../../src/engine/useEngineState";
 import { AlertSeverity } from "../../../src/engine/patientState";
+import { getHudToast, subscribeHudToast } from "./hudToastStore";
 
 type HudProps = {
   placeholderCount?: number;
@@ -35,6 +36,7 @@ export default function Hud({ placeholderCount }: HudProps) {
     getHotspotProjection,
     getHotspotProjection
   );
+  const toast = useSyncExternalStore(subscribeHudToast, getHudToast, getHudToast);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -97,6 +99,7 @@ export default function Hud({ placeholderCount }: HudProps) {
   const hasSelection = Boolean(projection.id && projection.visible);
   const clampedX = clamp(projection.x, 0, viewport.width);
   const clampedY = clamp(projection.y, 0, viewport.height);
+  const showToast = toast.message.length > 0;
 
   return (
     <div className="hud-root">
@@ -188,6 +191,10 @@ export default function Hud({ placeholderCount }: HudProps) {
           </>
         )}
       </svg>
+
+      <div className={`hud-toast ${showToast ? "show" : ""}`} role="status" aria-live="polite">
+        {toast.message}
+      </div>
 
       <style jsx>{`
         .hud-root {
@@ -390,6 +397,29 @@ export default function Hud({ placeholderCount }: HudProps) {
           fill: rgba(56, 189, 248, 0.9);
           stroke: rgba(14, 116, 144, 0.9);
           stroke-width: 2;
+        }
+        .hud-toast {
+          position: absolute;
+          left: 50%;
+          bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+          transform: translateX(-50%) translateY(10px);
+          max-width: min(340px, 90vw);
+          padding: 10px 14px;
+          border-radius: 12px;
+          background: rgba(15, 23, 42, 0.9);
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          color: #f8fafc;
+          font-size: 14px;
+          letter-spacing: 0.01em;
+          opacity: 0;
+          transition: opacity 160ms ease, transform 160ms ease;
+          text-align: center;
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+        }
+        .hud-toast.show {
+          opacity: 1;
+          transform: translateX(-50%) translateY(0);
         }
         @media (max-width: 900px) {
           .hud-top {

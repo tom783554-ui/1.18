@@ -28,6 +28,7 @@ import {
 } from "./hotspotProjectionStore";
 import { getEngineState, subscribe } from "../../../src/engine/store";
 import type { PatientState } from "../../../src/engine/patientState";
+import type { HotspotActionContext, HotspotEntry as CodeBlueHotspotEntry } from "../../../src/sim/codeblue/loadCodeBlueHotspots";
 import { setM3dPick } from "../utils/m3dDebug";
 
 const PANEL_EVENT = "m3d:panel" as const;
@@ -54,6 +55,8 @@ export type HotspotEntry = {
   pickMesh: AbstractMesh;
   sourceName: string;
   radius: number;
+  category?: string;
+  onClick?: (ctx: HotspotActionContext) => void;
 };
 
 type HotspotSystemOptions = {
@@ -63,6 +66,8 @@ type HotspotSystemOptions = {
   highlightLayerRef: { current: HighlightLayer | null };
   selectedRef: { current: HotspotEntry | null };
   onDeselect?: () => void;
+  entries?: CodeBlueHotspotEntry[];
+  actionContext?: HotspotActionContext;
 };
 
 type HudElements = {
@@ -204,7 +209,8 @@ const shouldTreatAsInteractive = (node: TransformNode | AbstractMesh) => {
 const buildHotspots = (
   scene: Scene,
   colliders: AbstractMesh[],
-  hotspotMap: Map<number, HotspotEntry>
+  hotspotMap: Map<number, HotspotEntry>,
+  manifestEntries?: CodeBlueHotspotEntry[]
 ): HotspotEntry[] => {
   hotspotMap.clear();
   const entries: HotspotEntry[] = [];
@@ -213,6 +219,59 @@ const buildHotspots = (
     ...scene.transformNodes,
     ...scene.meshes
   ];
+
+  if (manifestEntries && manifestEntries.length > 0) {
+    manifestEntries.forEach((manifestEntry) => {
+      const node =
+        scene.getTransformNodeByName(manifestEntry.meshName) ??
+        scene.getMeshByName(manifestEntry.meshName);
+      if (!node) {
+        return;
+      }
+
+      const meta = getMetadata(node);
+      const radius = Number.isFinite(meta.radius) ? (meta.radius as number) : DEFAULT_RADIUS;
+
+      let pickMesh: AbstractMesh;
+      if (node instanceof AbstractMesh && isRenderableMesh(node)) {
+        node.isPickable = true;
+        pickMesh = node;
+      } else {
+        pickMesh = createPickCollider(
+          scene,
+          node,
+          radius,
+          manifestEntry.id,
+          meta.prefix,
+          manifestEntry.label,
+          manifestEntry.type
+        );
+        colliders.push(pickMesh);
+      }
+
+      const entry: HotspotEntry = {
+        prefix: meta.prefix,
+        id: manifestEntry.id,
+        label: manifestEntry.label,
+        type: manifestEntry.type ?? meta.type ?? "hotspot",
+        node,
+        pickMesh,
+        sourceName: node.name,
+        radius,
+        category: manifestEntry.category,
+        onClick: manifestEntry.onClick
+      };
+
+      hotspotMap.set(pickMesh.uniqueId, entry);
+      if (node instanceof AbstractMesh) {
+        hotspotMap.set(node.uniqueId, entry);
+      } else {
+        hotspotMap.set(node.uniqueId, entry);
+      }
+      entries.push(entry);
+    });
+    return entries;
+  }
 
   nodes.forEach((node) => {
     if (!shouldTreatAsInteractive(node)) {
@@ -403,7 +462,9 @@ export function attachHotspotSystem({
   uiRef,
   highlightLayerRef,
   selectedRef,
-  onDeselect
+  onDeselect,
+  entries: manifestEntries,
+  actionContext
 }: HotspotSystemOptions): { refresh: () => void; dispose: () => void } {
   const createdColliders: AbstractMesh[] = [];
   const testNodes: TransformNode[] = [];
@@ -592,10 +653,11 @@ export function attachHotspotSystem({
     createdColliders.splice(0).forEach((collider) => collider.dispose(false, true));
     testNodes.splice(0).forEach((node) => node.dispose(false, true));
 
-    hotspots = buildHotspots(scene, createdColliders, hotspotMap);
-    if (hotspots.length === 0) {
+    const hasManifestEntries = Boolean(manifestEntries && manifestEntries.length > 0);
+    hotspots = buildHotspots(scene, createdColliders, hotspotMap, manifestEntries);
+    if (hotspots.length === 0 && !hasManifestEntries) {
       testNodes.push(...createTestHotspots(scene, camera));
-      hotspots = buildHotspots(scene, createdColliders, hotspotMap);
+      hotspots = buildHotspots(scene, createdColliders, hotspotMap, manifestEntries);
     }
 
     hotspots.forEach((entry) => {
@@ -649,6 +711,9 @@ export function attachHotspotSystem({
           pickedNodeName: entry.node.name ?? entry.sourceName ?? undefined,
           time: Date.now()
         });
+        if (entry.onClick && actionContext) {
+          entry.onClick(actionContext);
+        }
         return;
       }
     }

@@ -14,12 +14,18 @@ import {
 import type { AdvancedDynamicTexture } from "@babylonjs/gui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startEngineLoop, stopEngineLoop } from "../../src/engine/store";
+import { getCodeBlueEngineState } from "../../src/sim/codeblue/codeblueState";
+import {
+  buildHotspotEntries,
+  codeBlueManifest
+} from "../../src/sim/codeblue/loadCodeBlueHotspots";
 import { createEngine } from "./engine/createEngine";
 import { attachHotspotSystem, type HotspotEntry } from "./interactions/hotspotSystem";
 import { configureCamera, createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import { getM3dDebugState, setM3dReady } from "./utils/m3dDebug";
 import Hud from "./ui/Hud";
+import { setHudToast } from "./ui/hudToastStore";
 import LoadingOverlay from "./ui/LoadingOverlay";
 import Panels from "./ui/Panels";
 import ZoomTestOverlay from "./ui/ZoomTestOverlay";
@@ -93,7 +99,26 @@ export default function Viewer() {
     lastPickMeshName: "none"
   });
 
+  const codeBlueEntries = useMemo(() => buildHotspotEntries(), []);
   const shareUrl = useMemo(() => formatShareUrl(shareGlbParam), [shareGlbParam]);
+  const actionContext = useMemo(
+    () => ({
+      engineState: getCodeBlueEngineState(),
+      uiToast: (message: string) => setHudToast(message)
+    }),
+    []
+  );
+
+  useEffect(() => {
+    const { version, node_count: nodeCount } = codeBlueManifest;
+    const registered = codeBlueEntries.length;
+    console.info(`[CodeBlue] manifest ${version} nodes=${nodeCount} registered=${registered}`);
+    if (registered < 100) {
+      console.warn(
+        `[CodeBlue] Expected >= 100 registered hotspots/interactables, got ${registered}`
+      );
+    }
+  }, [codeBlueEntries]);
 
   const clearIdleTimer = () => {
     if (idleTimer.current) {
@@ -482,7 +507,9 @@ export default function Viewer() {
       onDeselect: () => {
         resetCamera();
         clearSelection();
-      }
+      },
+      entries: codeBlueEntries,
+      actionContext
     });
 
     cameraDefaults.current = {
