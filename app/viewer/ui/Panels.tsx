@@ -1,7 +1,8 @@
 "use client";
 
-import { setVentOn } from "../../../src/engine/store";
+import { applyBvm, setFio2, setVentOn } from "../../../src/engine/store";
 import { useEngineState } from "../../../src/engine/useEngineState";
+import scenario from "../../../src/engine/scenarios/respFailure.json";
 
 type PanelState = { title: string; id: string } | null;
 
@@ -28,13 +29,16 @@ const isMonitorPanel = (panel: PanelState) => {
   return id.includes("monitor") || title.includes("monitor");
 };
 
-const formatUpdatedTime = (lastUpdatedMs: number) =>
-  new Date(lastUpdatedMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const scenarioConfig = scenario as typeof scenario;
 
 export default function Panels({ panel, onClose }: PanelsProps) {
   const engineState = useEngineState();
-  const { vitals, devices, lastUpdatedMs } = engineState;
-  const updatedLabel = formatUpdatedTime(lastUpdatedMs);
+  const { timeSec } = engineState;
+  const fio2Pct = Math.round(engineState.fio2 * 100);
+  const minFio2 = scenarioConfig.fio2Effect.min;
+  const maxFio2 = scenarioConfig.fio2Effect.max;
+  const fio2MinPct = Math.round(minFio2 * 100);
+  const fio2MaxPct = Math.round(maxFio2 * 100);
 
   if (!panel) {
     return null;
@@ -58,33 +62,54 @@ export default function Panels({ panel, onClose }: PanelsProps) {
               <div className="section-title">Ventilator Control</div>
               <div className="status-row">
                 <span>Status</span>
-                <span className={devices.ventOn ? "status on" : "status off"}>
-                  {devices.ventOn ? "ON" : "OFF"}
+                <span className={engineState.ventOn ? "status on" : "status off"}>
+                  {engineState.ventOn ? "ON" : "OFF"}
                 </span>
               </div>
               <button
                 type="button"
                 className="action toggle"
-                onClick={() => setVentOn(!devices.ventOn)}
+                onClick={() => setVentOn(!engineState.ventOn)}
               >
                 ON/OFF
               </button>
               <div className="button-row">
                 <button
                   type="button"
-                  className={devices.ventOn ? "action active" : "action"}
+                  className={engineState.ventOn ? "action active" : "action"}
                   onClick={() => setVentOn(true)}
                 >
                   Turn On
                 </button>
                 <button
                   type="button"
-                  className={!devices.ventOn ? "action active" : "action"}
+                  className={!engineState.ventOn ? "action active" : "action"}
                   onClick={() => setVentOn(false)}
                 >
                   Turn Off
                 </button>
               </div>
+              <div className="section-title">FiO₂ Control</div>
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={fio2MinPct}
+                  max={fio2MaxPct}
+                  value={fio2Pct}
+                  onChange={(event) => {
+                    const nextPct = Number(event.target.value);
+                    setFio2(nextPct / 100);
+                  }}
+                />
+                <span className="slider-value">{fio2Pct}%</span>
+              </div>
+              <div className="note">
+                Higher FiO₂ increases oxygenation rate and ceiling.
+              </div>
+              <div className="section-title">Bag-Valve-Mask</div>
+              <button type="button" className="action bvm" onClick={() => applyBvm()}>
+                Bag Patient
+              </button>
             </div>
           ) : null}
           {isMonitorPanel(panel) ? (
@@ -93,28 +118,22 @@ export default function Panels({ panel, onClose }: PanelsProps) {
               <div className="vitals-grid">
                 <div className="vital">
                   <span className="label">HR</span>
-                  <span className="value">{Math.round(vitals.hrBpm)} bpm</span>
+                  <span className="value">{Math.round(engineState.hr)} bpm</span>
                 </div>
                 <div className="vital">
                   <span className="label">SpO₂</span>
-                  <span className="value">{vitals.spo2Pct.toFixed(1)}%</span>
+                  <span className="value">{engineState.spo2.toFixed(1)}%</span>
                 </div>
                 <div className="vital">
                   <span className="label">Resp</span>
-                  <span className="value">{Math.round(vitals.respRpm)} rpm</span>
+                  <span className="value">{Math.round(engineState.rr)} rpm</span>
                 </div>
                 <div className="vital">
-                  <span className="label">BP</span>
-                  <span className="value">
-                    {Math.round(vitals.bpSys)}/{Math.round(vitals.bpDia)} mmHg
-                  </span>
-                </div>
-                <div className="vital">
-                  <span className="label">Temp</span>
-                  <span className="value">{vitals.tempC.toFixed(1)}°C</span>
+                  <span className="label">MAP</span>
+                  <span className="value">{Math.round(engineState.map)} mmHg</span>
                 </div>
               </div>
-              <div className="updated">Updated {updatedLabel}</div>
+              <div className="updated">Elapsed {Math.round(timeSec)}s</div>
             </div>
           ) : null}
           {!isVentilatorPanel(panel) && !isMonitorPanel(panel) ? (
@@ -223,6 +242,27 @@ export default function Panels({ panel, onClose }: PanelsProps) {
           display: flex;
           gap: 10px;
         }
+        .slider-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        input[type="range"] {
+          flex: 1;
+          accent-color: #38bdf8;
+        }
+        .slider-value {
+          min-width: 44px;
+          text-align: right;
+          font-size: 12px;
+          font-weight: 600;
+          color: #e2e8f0;
+        }
+        .note {
+          font-size: 11px;
+          color: rgba(226, 232, 240, 0.72);
+          line-height: 1.4;
+        }
         .action {
           flex: 1;
           appearance: none;
@@ -234,6 +274,10 @@ export default function Panels({ panel, onClose }: PanelsProps) {
           padding: 8px 10px;
           border-radius: 10px;
           cursor: pointer;
+        }
+        .action.bvm {
+          border-color: rgba(248, 113, 113, 0.6);
+          background: rgba(248, 113, 113, 0.15);
         }
         .action.toggle {
           width: 100%;
