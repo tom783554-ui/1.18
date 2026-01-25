@@ -27,7 +27,10 @@ export class Engine {
       defibCharged: false,
       defibShockAtSec: null,
       alerts: [],
-      objectives: createInitialObjectives(scenarioConfig)
+      objectives: createInitialObjectives(scenarioConfig),
+      dx: null,
+      steps: [],
+      roleFocus: null
     };
     const withObjectives = {
       ...initial,

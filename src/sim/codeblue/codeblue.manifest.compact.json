@@ -1,0 +1,10 @@
+{
+  "version": "0",
+  "explicit": {
+    "HOTSPOT": [],
+    "INTERACTABLE": [],
+    "UI_ANCHOR": [],
+    "ENV": []
+  },
+  "patterns": []
+}
