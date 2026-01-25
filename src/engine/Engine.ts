@@ -1,78 +1,103 @@
-import type { Devices, EngineState, Vitals } from "./types";
+import scenario from "./scenarios/respFailure.json";
+import type { PatientState } from "./patientState";
+import { deriveAlerts } from "./alerts";
+import { createInitialObjectives, updateObjectives } from "./objectives";
+import { updatePatient, type ScenarioConfig } from "./updatePatient";
 
-const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const scenarioConfig = scenario as ScenarioConfig;
 
 export class Engine {
-  private state: EngineState;
+  private state: PatientState;
 
   constructor() {
-    const vitals: Vitals = {
-      hrBpm: 80,
-      spo2Pct: 100,
-      respRpm: 13,
-      tempC: 37.3,
-      bpSys: 112,
-      bpDia: 71
+    this.state = this.initializeState();
+  }
+
+  private initializeState(): PatientState {
+    const initial: PatientState = {
+      timeSec: 0,
+      spo2: scenarioConfig.baseline.spo2,
+      hr: scenarioConfig.baseline.hr,
+      rr: scenarioConfig.baseline.rr,
+      map: scenarioConfig.baseline.map,
+      ventOn: true,
+      fio2: scenarioConfig.fio2Effect.min,
+      bvmActive: false,
+      bvmBoostUntil: null,
+      alerts: [],
+      objectives: createInitialObjectives(scenarioConfig)
     };
-    const devices: Devices = {
-      ventOn: true
+    const withObjectives = {
+      ...initial,
+      objectives: updateObjectives(initial, scenarioConfig, 0)
     };
-    this.state = {
-      tSec: 0,
-      vitals,
-      devices,
-      lastUpdatedMs: Date.now()
+    return {
+      ...withObjectives,
+      alerts: deriveAlerts(withObjectives, scenarioConfig)
     };
   }
 
-  getState(): EngineState {
+  getState(): PatientState {
     return this.state;
   }
 
   setVentOn(on: boolean) {
-    if (this.state.devices.ventOn === on) {
+    if (this.state.ventOn === on) {
       return;
     }
-    this.state = {
+    const nextState = {
       ...this.state,
-      devices: {
-        ...this.state.devices,
-        ventOn: on
-      },
-      lastUpdatedMs: Date.now()
+      ventOn: on
+    };
+    this.state = {
+      ...nextState,
+      objectives: updateObjectives(nextState, scenarioConfig, 0),
+      alerts: deriveAlerts(nextState, scenarioConfig)
+    };
+  }
+
+  setFio2(fio2: number) {
+    if (!Number.isFinite(fio2)) {
+      return;
+    }
+    const clamped = Math.min(
+      Math.max(fio2, scenarioConfig.fio2Effect.min),
+      scenarioConfig.fio2Effect.max
+    );
+    const nextState = {
+      ...this.state,
+      fio2: clamped
+    };
+    this.state = {
+      ...nextState,
+      objectives: updateObjectives(nextState, scenarioConfig, 0),
+      alerts: deriveAlerts(nextState, scenarioConfig)
+    };
+  }
+
+  applyBvm() {
+    const boostUntil = this.state.timeSec + scenarioConfig.bvm.durationSec;
+    const nextState = {
+      ...this.state,
+      bvmActive: true,
+      bvmBoostUntil: boostUntil
+    };
+    this.state = {
+      ...nextState,
+      objectives: updateObjectives(nextState, scenarioConfig, 0),
+      alerts: deriveAlerts(nextState, scenarioConfig)
     };
   }
 
   tick(dtSec: number) {
-    if (!Number.isFinite(dtSec) || dtSec <= 0) {
-      return;
-    }
-
-    const kSpo2 = 0.1;
-    const kHr = 0.08;
-    const { vitals, devices } = this.state;
-
-    const spo2Target = devices.ventOn ? 99.5 : 86;
-    const hrTarget = devices.ventOn
-      ? 80
-      : 80 + clamp((95 - vitals.spo2Pct) * 1.2, 0, 25);
-
-    const nextSpo2 = clamp(
-      vitals.spo2Pct + (spo2Target - vitals.spo2Pct) * kSpo2 * dtSec,
-      80,
-      100
-    );
-    const nextHr = clamp(vitals.hrBpm + (hrTarget - vitals.hrBpm) * kHr * dtSec, 55, 140);
-
+    const updated = updatePatient(this.state, dtSec, scenarioConfig);
+    const withObjectives = {
+      ...updated,
+      objectives: updateObjectives(updated, scenarioConfig, dtSec)
+    };
     this.state = {
-      ...this.state,
-      tSec: this.state.tSec + dtSec,
-      lastUpdatedMs: Date.now(),
-      vitals: {
-        ...vitals,
-        spo2Pct: nextSpo2,
-        hrBpm: nextHr
-      }
+      ...withObjectives,
+      alerts: deriveAlerts(withObjectives, scenarioConfig)
     };
   }
 }

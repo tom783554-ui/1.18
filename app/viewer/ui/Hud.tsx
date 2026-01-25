@@ -7,6 +7,7 @@ import {
   subscribeHotspotProjection
 } from "../interactions/hotspotProjectionStore";
 import { useEngineState } from "../../../src/engine/useEngineState";
+import { AlertSeverity } from "../../../src/engine/patientState";
 
 type HudProps = {
   placeholderCount?: number;
@@ -70,42 +71,19 @@ export default function Hud({ placeholderCount }: HudProps) {
     return () => observer.disconnect();
   }, []);
 
-  const map = useMemo(() => {
-    const { bpSys, bpDia } = engineState.vitals;
-    return Math.round((bpSys + 2 * bpDia) / 3);
-  }, [engineState.vitals]);
-
   const alerts = useMemo(() => {
-    const { vitals, devices } = engineState;
-    const list: { id: string; label: string; tone: "danger" | "warn" | "info" }[] = [];
-    if (!devices.ventOn) {
-      list.push({ id: "vent-off", label: "Ventilator off", tone: "danger" });
-    }
-    if (vitals.spo2Pct < 92) {
-      list.push({ id: "spo2-low", label: "SpO₂ low", tone: "danger" });
-    } else if (vitals.spo2Pct < 95) {
-      list.push({ id: "spo2-watch", label: "SpO₂ watch", tone: "warn" });
-    }
-    if (vitals.hrBpm > 110) {
-      list.push({ id: "hr-high", label: "HR elevated", tone: "warn" });
-    }
-    if (vitals.respRpm > 20) {
-      list.push({ id: "rr-high", label: "RR elevated", tone: "warn" });
-    }
-    if (list.length === 0) {
-      list.push({ id: "stable", label: "No active alerts", tone: "info" });
-    }
-    return list;
-  }, [engineState]);
+    return engineState.alerts.map((alert) => {
+      const tone =
+        alert.severity === AlertSeverity.CRITICAL
+          ? "critical"
+          : alert.severity === AlertSeverity.WARNING
+            ? "warn"
+            : "info";
+      return { ...alert, tone };
+    });
+  }, [engineState.alerts]);
 
-  const objectives = useMemo(() => {
-    const { vitals, devices } = engineState;
-    return [
-      { id: "vent", label: "Ventilator running", done: devices.ventOn },
-      { id: "spo2", label: "Maintain SpO₂ ≥ 95%", done: vitals.spo2Pct >= 95 },
-      { id: "hr", label: "Stabilize HR 60–100", done: vitals.hrBpm >= 60 && vitals.hrBpm <= 100 }
-    ];
-  }, [engineState]);
+  const objectives = useMemo(() => engineState.objectives, [engineState.objectives]);
 
   const openMonitorPanel = () => {
     if (typeof window === "undefined") {
@@ -130,24 +108,24 @@ export default function Hud({ placeholderCount }: HudProps) {
         <div className="hud-topbar">
           <div className="metric">
             <span>HR</span>
-            <strong>{Math.round(engineState.vitals.hrBpm)}</strong>
+            <strong>{Math.round(engineState.hr)}</strong>
           </div>
           <div className="metric">
             <span>MAP</span>
-            <strong>{map}</strong>
+            <strong>{Math.round(engineState.map)}</strong>
           </div>
           <div className="metric">
             <span>SpO₂</span>
-            <strong>{engineState.vitals.spo2Pct.toFixed(1)}</strong>
+            <strong>{engineState.spo2.toFixed(1)}</strong>
           </div>
           <div className="metric">
             <span>RR</span>
-            <strong>{Math.round(engineState.vitals.respRpm)}</strong>
+            <strong>{Math.round(engineState.rr)}</strong>
           </div>
         </div>
         <div className="hud-time">
           <div className="elapsed-label">Elapsed</div>
-          <div className="elapsed">{formatElapsed(engineState.tSec)}</div>
+          <div className="elapsed">{formatElapsed(engineState.timeSec)}</div>
         </div>
       </div>
 
@@ -192,8 +170,8 @@ export default function Hud({ placeholderCount }: HudProps) {
       <div className="hud-footer">
         <div className="status-chip">
           <span className="label">Vent</span>
-          <span className={engineState.devices.ventOn ? "value on" : "value off"}>
-            {engineState.devices.ventOn ? "ON" : "OFF"}
+          <span className={engineState.ventOn ? "value on" : "value off"}>
+            {engineState.ventOn ? "ON" : "OFF"}
           </span>
         </div>
         <div className="status-chip">
@@ -317,9 +295,11 @@ export default function Hud({ placeholderCount }: HudProps) {
           border: 1px solid rgba(148, 163, 184, 0.25);
           color: rgba(226, 232, 240, 0.8);
         }
-        .pill.danger {
-          border-color: rgba(248, 113, 113, 0.6);
-          color: #fecaca;
+        .pill.critical {
+          border-color: rgba(248, 113, 113, 0.8);
+          color: #fee2e2;
+          background: rgba(127, 29, 29, 0.35);
+          animation: criticalPulse 1.2s ease-in-out infinite;
         }
         .pill.warn {
           border-color: rgba(251, 191, 36, 0.6);
@@ -364,6 +344,7 @@ export default function Hud({ placeholderCount }: HudProps) {
         .objectives li.done .checkbox {
           border-color: rgba(134, 239, 172, 0.8);
           color: rgba(134, 239, 172, 0.9);
+          animation: objectivePop 0.4s ease;
         }
         .hud-footer {
           position: absolute;
@@ -422,6 +403,26 @@ export default function Hud({ placeholderCount }: HudProps) {
           .hud-side {
             right: 12px;
             width: 210px;
+          }
+        }
+        @keyframes criticalPulse {
+          0%,
+          100% {
+            box-shadow: 0 0 0 rgba(248, 113, 113, 0);
+          }
+          50% {
+            box-shadow: 0 0 10px rgba(248, 113, 113, 0.6);
+          }
+        }
+        @keyframes objectivePop {
+          0% {
+            transform: scale(0.8);
+          }
+          70% {
+            transform: scale(1.15);
+          }
+          100% {
+            transform: scale(1);
           }
         }
       `}</style>

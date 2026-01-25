@@ -1,10 +1,11 @@
 import { Engine } from "./Engine";
-import type { EngineState } from "./types";
+import type { PatientState } from "./patientState";
 
 const engine = new Engine();
 const subscribers = new Set<() => void>();
 let loopTimer: number | null = null;
 let lastNowMs = 0;
+const TICK_MS = 200;
 
 const notify = () => {
   subscribers.forEach((listener) => listener());
@@ -12,7 +13,7 @@ const notify = () => {
 
 export const getEngine = () => engine;
 
-export const getEngineState = (): EngineState => engine.getState();
+export const getEngineState = (): PatientState => engine.getState();
 
 export const subscribe = (listener: () => void) => {
   subscribers.add(listener);
@@ -23,6 +24,16 @@ export const subscribe = (listener: () => void) => {
 
 export const setVentOn = (on: boolean) => {
   engine.setVentOn(on);
+  notify();
+};
+
+export const setFio2 = (fio2: number) => {
+  engine.setFio2(fio2);
+  notify();
+};
+
+export const applyBvm = () => {
+  engine.applyBvm();
   notify();
 };
 
@@ -37,7 +48,7 @@ export const startEngineLoop = () => {
     lastNowMs = nowMs;
     engine.tick(dtSec);
     notify();
-  }, 500);
+  }, TICK_MS);
 };
 
 export const stopEngineLoop = () => {

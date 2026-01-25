@@ -27,7 +27,7 @@ import {
   setHotspotSelection
 } from "./hotspotProjectionStore";
 import { getEngineState, subscribe } from "../../../src/engine/store";
-import type { Vitals } from "../../../src/engine/types";
+import type { PatientState } from "../../../src/engine/patientState";
 import { setM3dPick } from "../utils/m3dDebug";
 
 const PANEL_EVENT = "m3d:panel" as const;
@@ -410,9 +410,9 @@ export function attachHotspotSystem({
   const hud = ensureHud(scene, uiRef);
   const highlightLayer = ensureHighlightLayer(scene, highlightLayerRef);
   let hotspots: HotspotEntry[] = [];
-  let latestVitals: Vitals | null = getEngineState().vitals;
+  let latestVitals: PatientState | null = getEngineState();
   const unsubscribeVitals = subscribe(() => {
-    latestVitals = getEngineState().vitals;
+    latestVitals = getEngineState();
   });
 
   let lastPointer = { x: 0, y: 0 };
@@ -502,16 +502,15 @@ export function attachHotspotSystem({
     return false;
   };
 
-  const formatMonitorVitals = (vitals: Vitals | null) => {
+  const formatMonitorVitals = (vitals: PatientState | null) => {
     if (!vitals) {
-      return "HR -- bpm\nSpO₂ --%\nRR -- /min\nBP --/--\nTemp --°C";
+      return "HR -- bpm\nSpO₂ --%\nRR -- /min\nMAP -- mmHg";
     }
     return [
-      `HR ${Math.round(vitals.hrBpm)} bpm`,
-      `SpO₂ ${vitals.spo2Pct.toFixed(1)}%`,
-      `RR ${Math.round(vitals.respRpm)} /min`,
-      `BP ${Math.round(vitals.bpSys)}/${Math.round(vitals.bpDia)}`,
-      `Temp ${vitals.tempC.toFixed(1)}°C`
+      `HR ${Math.round(vitals.hr)} bpm`,
+      `SpO₂ ${vitals.spo2.toFixed(1)}%`,
+      `RR ${Math.round(vitals.rr)} /min`,
+      `MAP ${Math.round(vitals.map)} mmHg`
     ].join("\n");
   };
 
