@@ -6,7 +6,11 @@ import {
   getHotspotProjection,
   subscribeHotspotProjection
 } from "../interactions/hotspotProjectionStore";
-import { useEngineState } from "../../../src/engine/useEngineState";
+import { deriveAlerts } from "../../../src/engine/alerts";
+import { usePatientEngine } from "../../../src/engine/usePatientEngine";
+import ScenarioMenu from "../../../src/ui/ScenarioMenu";
+import DebugPanel from "../../../src/ui/DebugPanel";
+import { useAlarmAudio } from "./useAlarmAudio";
 
 type HudProps = {
   placeholderCount?: number;
@@ -23,10 +27,22 @@ const formatElapsed = (tSec: number) => {
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
+const trendArrow = (direction: "up" | "down" | "steady") => {
+  switch (direction) {
+    case "up":
+      return "↑";
+    case "down":
+      return "↓";
+    default:
+      return "→";
+  }
+};
+
 export default function Hud({ placeholderCount }: HudProps) {
-  const engineState = useEngineState();
+  const { state, config, dispatch } = usePatientEngine();
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [anchor, setAnchor] = useState({ x: 0, y: 0 });
+  const [debugOpen, setDebugOpen] = useState(false);
   const alertAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const projection = useSyncExternalStore(
@@ -70,47 +86,16 @@ export default function Hud({ placeholderCount }: HudProps) {
     return () => observer.disconnect();
   }, []);
 
-  const map = useMemo(() => {
-    const { bpSys, bpDia } = engineState.vitals;
-    return Math.round((bpSys + 2 * bpDia) / 3);
-  }, [engineState.vitals]);
+  const alerts = useMemo(() => deriveAlerts(state, config), [config, state]);
+  const alertSeverities = useMemo(() => alerts.map((alert) => alert.severity), [alerts]);
 
-  const alerts = useMemo(() => {
-    const { vitals, devices } = engineState;
-    const list: { id: string; label: string; tone: "danger" | "warn" | "info" }[] = [];
-    if (!devices.ventOn) {
-      list.push({ id: "vent-off", label: "Ventilator off", tone: "danger" });
-    }
-    if (vitals.spo2Pct < 92) {
-      list.push({ id: "spo2-low", label: "SpO₂ low", tone: "danger" });
-    } else if (vitals.spo2Pct < 95) {
-      list.push({ id: "spo2-watch", label: "SpO₂ watch", tone: "warn" });
-    }
-    if (vitals.hrBpm > 110) {
-      list.push({ id: "hr-high", label: "HR elevated", tone: "warn" });
-    }
-    if (vitals.respRpm > 20) {
-      list.push({ id: "rr-high", label: "RR elevated", tone: "warn" });
-    }
-    if (list.length === 0) {
-      list.push({ id: "stable", label: "No active alerts", tone: "info" });
-    }
-    return list;
-  }, [engineState]);
-
-  const objectives = useMemo(() => {
-    const { vitals, devices } = engineState;
-    return [
-      { id: "vent", label: "Ventilator running", done: devices.ventOn },
-      { id: "spo2", label: "Maintain SpO₂ ≥ 95%", done: vitals.spo2Pct >= 95 },
-      { id: "hr", label: "Stabilize HR 60–100", done: vitals.hrBpm >= 60 && vitals.hrBpm <= 100 }
-    ];
-  }, [engineState]);
+  const { enableAudio } = useAlarmAudio(alertSeverities, state.silenceUntilSec, state.tSec);
 
   const openMonitorPanel = () => {
     if (typeof window === "undefined") {
       return;
     }
+    enableAudio();
     window.dispatchEvent(
       new CustomEvent("m3d:panel", { detail: { open: true, title: "Monitor", id: "monitor" } })
     );
@@ -123,37 +108,61 @@ export default function Hud({ placeholderCount }: HudProps) {
   return (
     <div className="hud-root">
       <div className="hud-top">
-        <div className="hud-scenario">
-          <div className="scenario-label">Scenario</div>
-          <div className="scenario-name">Ventilation Sync</div>
-        </div>
+        <ScenarioMenu />
         <div className="hud-topbar">
           <div className="metric">
             <span>HR</span>
-            <strong>{Math.round(engineState.vitals.hrBpm)}</strong>
+            <strong>
+              {Math.round(state.vitals.hrBpm)}
+              <em>{trendArrow(state.trendState.hr)}</em>
+            </strong>
           </div>
           <div className="metric">
             <span>MAP</span>
-            <strong>{map}</strong>
+            <strong>
+              {Math.round(state.vitals.mapMmhg)}
+              <em>{trendArrow(state.trendState.map)}</em>
+            </strong>
           </div>
           <div className="metric">
             <span>SpO₂</span>
-            <strong>{engineState.vitals.spo2Pct.toFixed(1)}</strong>
+            <strong>
+              {state.vitals.spo2Pct.toFixed(1)}
+              <em>{trendArrow(state.trendState.spo2)}</em>
+            </strong>
           </div>
           <div className="metric">
             <span>RR</span>
-            <strong>{Math.round(engineState.vitals.respRpm)}</strong>
+            <strong>
+              {Math.round(state.vitals.respRpm)}
+              <em>{trendArrow(state.trendState.rr)}</em>
+            </strong>
           </div>
         </div>
         <div className="hud-time">
           <div className="elapsed-label">Elapsed</div>
-          <div className="elapsed">{formatElapsed(engineState.tSec)}</div>
+          <div className="elapsed">{formatElapsed(state.tSec)}</div>
         </div>
       </div>
 
       <div className="hud-side">
         <div className="alerts" ref={alertAnchorRef}>
-          <div className="section-title">Alerts</div>
+          <div className="section-header">
+            <div className="section-title">Alerts</div>
+            <button
+              type="button"
+              className="silence"
+              onClick={() => {
+                enableAudio();
+                dispatch({
+                  type: "SILENCE_ALARMS",
+                  durationSec: config.alarms.silenceDurationSec
+                });
+              }}
+            >
+              Silence {config.alarms.silenceDurationSec}s
+            </button>
+          </div>
           <div
             className="pill-stack"
             role="button"
@@ -167,7 +176,7 @@ export default function Hud({ placeholderCount }: HudProps) {
             }}
           >
             {alerts.map((alert) => (
-              <span key={alert.id} className={`pill ${alert.tone}`}>
+              <span key={alert.id} className={`pill ${alert.severity.toLowerCase()}`}>
                 {alert.label}
               </span>
             ))}
@@ -177,14 +186,28 @@ export default function Hud({ placeholderCount }: HudProps) {
         <div className="objectives">
           <div className="section-title">Objectives</div>
           <ul>
-            {objectives.map((objective) => (
-              <li key={objective.id} className={objective.done ? "done" : ""}>
-                <span className="checkbox" aria-hidden="true">
-                  {objective.done ? "✓" : "○"}
-                </span>
-                <span>{objective.label}</span>
-              </li>
-            ))}
+            {state.objectiveState.objectives.map((objective) => {
+              const progress = objective.durationSec
+                ? Math.min(1, objective.progressSec / objective.durationSec)
+                : objective.done
+                ? 1
+                : 0;
+              return (
+                <li key={objective.id} className={objective.done ? "done" : ""}>
+                  <div className="objective-row">
+                    <span className="checkbox" aria-hidden="true">
+                      {objective.done ? "✓" : "○"}
+                    </span>
+                    <span>{objective.label}</span>
+                  </div>
+                  {objective.durationSec ? (
+                    <div className="progress">
+                      <span style={{ width: `${progress * 100}%` }} />
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </div>
       </div>
@@ -192,15 +215,27 @@ export default function Hud({ placeholderCount }: HudProps) {
       <div className="hud-footer">
         <div className="status-chip">
           <span className="label">Vent</span>
-          <span className={engineState.devices.ventOn ? "value on" : "value off"}>
-            {engineState.devices.ventOn ? "ON" : "OFF"}
+          <span className={state.devices.ventOn ? "value on" : "value off"}>
+            {state.devices.ventOn ? "ON" : "OFF"}
           </span>
+        </div>
+        <div className="status-chip">
+          <span className="label">FiO₂</span>
+          <span className="value">{Math.round(state.interventions.fio2 * 100)}%</span>
         </div>
         <div className="status-chip">
           <span className="label">Placeholders</span>
           <span className="value">{placeholderCount ?? 0}</span>
         </div>
       </div>
+
+      <DebugPanel
+        open={debugOpen}
+        onToggle={() => setDebugOpen((prev) => !prev)}
+        state={state}
+        config={config}
+        onRunSimCheck={() => dispatch({ type: "RUN_SIM_CHECK" })}
+      />
 
       <svg className="callout" aria-hidden="true">
         {hasSelection && (
@@ -234,19 +269,7 @@ export default function Hud({ placeholderCount }: HudProps) {
           border-radius: 14px;
           padding: 10px 14px;
           backdrop-filter: blur(10px);
-        }
-        .hud-scenario {
-          display: grid;
-          gap: 2px;
-          text-transform: uppercase;
-          letter-spacing: 0.12em;
-          font-size: 10px;
-          color: rgba(226, 232, 240, 0.7);
-        }
-        .scenario-name {
-          color: #f8fafc;
-          font-weight: 600;
-          letter-spacing: 0.08em;
+          pointer-events: auto;
         }
         .hud-topbar {
           display: grid;
@@ -264,6 +287,14 @@ export default function Hud({ placeholderCount }: HudProps) {
         .metric strong {
           font-size: 16px;
           color: #f8fafc;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .metric em {
+          font-style: normal;
+          font-size: 12px;
+          color: rgba(148, 163, 184, 0.85);
         }
         .hud-time {
           justify-self: end;
@@ -284,7 +315,7 @@ export default function Hud({ placeholderCount }: HudProps) {
           right: 16px;
           display: grid;
           gap: 12px;
-          width: 240px;
+          width: 260px;
         }
         .alerts,
         .objectives {
@@ -299,7 +330,23 @@ export default function Hud({ placeholderCount }: HudProps) {
           text-transform: uppercase;
           letter-spacing: 0.14em;
           color: rgba(226, 232, 240, 0.6);
+        }
+        .section-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
           margin-bottom: 8px;
+        }
+        .silence {
+          appearance: none;
+          border: 1px solid rgba(148, 163, 184, 0.3);
+          background: rgba(30, 41, 59, 0.6);
+          color: #e2e8f0;
+          border-radius: 999px;
+          font-size: 10px;
+          padding: 4px 8px;
+          cursor: pointer;
         }
         .pill-stack {
           display: grid;
@@ -317,12 +364,14 @@ export default function Hud({ placeholderCount }: HudProps) {
           border: 1px solid rgba(148, 163, 184, 0.25);
           color: rgba(226, 232, 240, 0.8);
         }
-        .pill.danger {
-          border-color: rgba(248, 113, 113, 0.6);
-          color: #fecaca;
+        .pill.critical {
+          border-color: rgba(248, 113, 113, 0.9);
+          color: #fee2e2;
+          background: rgba(127, 29, 29, 0.35);
+          animation: pulse-alert 1.2s ease-in-out infinite;
         }
-        .pill.warn {
-          border-color: rgba(251, 191, 36, 0.6);
+        .pill.warning {
+          border-color: rgba(251, 191, 36, 0.7);
           color: #fde68a;
         }
         .pill.info {
@@ -338,18 +387,22 @@ export default function Hud({ placeholderCount }: HudProps) {
           padding: 0;
           margin: 0;
           display: grid;
-          gap: 8px;
+          gap: 10px;
           font-size: 12px;
           color: rgba(226, 232, 240, 0.85);
         }
         .objectives li {
           display: grid;
-          grid-template-columns: 18px 1fr;
-          gap: 8px;
-          align-items: center;
+          gap: 6px;
         }
         .objectives li.done {
           color: rgba(134, 239, 172, 0.9);
+        }
+        .objective-row {
+          display: grid;
+          grid-template-columns: 18px 1fr;
+          gap: 8px;
+          align-items: center;
         }
         .checkbox {
           display: inline-flex;
@@ -364,6 +417,17 @@ export default function Hud({ placeholderCount }: HudProps) {
         .objectives li.done .checkbox {
           border-color: rgba(134, 239, 172, 0.8);
           color: rgba(134, 239, 172, 0.9);
+        }
+        .progress {
+          height: 6px;
+          border-radius: 999px;
+          background: rgba(148, 163, 184, 0.2);
+          overflow: hidden;
+        }
+        .progress span {
+          display: block;
+          height: 100%;
+          background: rgba(56, 189, 248, 0.85);
         }
         .hud-footer {
           position: absolute;
@@ -410,6 +474,17 @@ export default function Hud({ placeholderCount }: HudProps) {
           stroke: rgba(14, 116, 144, 0.9);
           stroke-width: 2;
         }
+        @keyframes pulse-alert {
+          0% {
+            box-shadow: 0 0 0 rgba(248, 113, 113, 0.4);
+          }
+          50% {
+            box-shadow: 0 0 12px rgba(248, 113, 113, 0.75);
+          }
+          100% {
+            box-shadow: 0 0 0 rgba(248, 113, 113, 0.4);
+          }
+        }
         @media (max-width: 900px) {
           .hud-top {
             grid-template-columns: 1fr;
@@ -421,7 +496,7 @@ export default function Hud({ placeholderCount }: HudProps) {
           }
           .hud-side {
             right: 12px;
-            width: 210px;
+            width: 220px;
           }
         }
       `}</style>

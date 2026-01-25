@@ -1,18 +1,50 @@
-import { Engine } from "./Engine";
-import type { EngineState } from "./types";
+import { applyAction, type PatientAction } from "./actions";
+import { createInitialState, type PatientState } from "./patientState";
+import {
+  DEFAULT_SCENARIO_ID,
+  loadScenarioConfig,
+  type ScenarioConfig
+} from "./scenarioConfig";
+import { updatePatient } from "./updatePatient";
 
-const engine = new Engine();
 const subscribers = new Set<() => void>();
 let loopTimer: number | null = null;
-let lastNowMs = 0;
+let engineState: PatientState = createInitialState(loadScenarioConfig(DEFAULT_SCENARIO_ID));
+let scenarioConfig: ScenarioConfig = loadScenarioConfig(DEFAULT_SCENARIO_ID);
+let initialized = false;
+
+export const TICK_DT_SEC = 0.1;
 
 const notify = () => {
   subscribers.forEach((listener) => listener());
 };
 
-export const getEngine = () => engine;
+const getScenarioFromLocation = () => {
+  if (typeof window === "undefined") {
+    return DEFAULT_SCENARIO_ID;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = params.get("scenario") ?? "";
+  const fromStorage = window.localStorage.getItem("m3d-scenario") ?? "";
+  const candidate = fromQuery || fromStorage || DEFAULT_SCENARIO_ID;
+  return candidate;
+};
 
-export const getEngineState = (): EngineState => engine.getState();
+const initializeScenario = () => {
+  if (initialized) {
+    return;
+  }
+  initialized = true;
+  const scenarioId = getScenarioFromLocation();
+  scenarioConfig = loadScenarioConfig(scenarioId);
+  engineState = createInitialState(scenarioConfig);
+};
+
+export const getEngineSnapshot = () => ({ state: engineState, config: scenarioConfig });
+
+export const getEngineState = (): PatientState => engineState;
+
+export const getScenarioConfig = (): ScenarioConfig => scenarioConfig;
 
 export const subscribe = (listener: () => void) => {
   subscribers.add(listener);
@@ -21,8 +53,14 @@ export const subscribe = (listener: () => void) => {
   };
 };
 
-export const setVentOn = (on: boolean) => {
-  engine.setVentOn(on);
+export const dispatchAction = (action: PatientAction) => {
+  engineState = applyAction(engineState, scenarioConfig, action);
+  notify();
+};
+
+export const setScenario = (scenarioId: string) => {
+  scenarioConfig = loadScenarioConfig(scenarioId);
+  engineState = createInitialState(scenarioConfig);
   notify();
 };
 
@@ -30,14 +68,11 @@ export const startEngineLoop = () => {
   if (loopTimer !== null || typeof window === "undefined") {
     return;
   }
-  lastNowMs = performance.now();
+  initializeScenario();
   loopTimer = window.setInterval(() => {
-    const nowMs = performance.now();
-    const dtSec = (nowMs - lastNowMs) / 1000;
-    lastNowMs = nowMs;
-    engine.tick(dtSec);
+    engineState = updatePatient(engineState, scenarioConfig, TICK_DT_SEC);
     notify();
-  }, 500);
+  }, TICK_DT_SEC * 1000);
 };
 
 export const stopEngineLoop = () => {

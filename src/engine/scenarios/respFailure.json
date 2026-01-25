@@ -1,0 +1,88 @@
+{
+  "id": "respFailure",
+  "name": "Respiratory Failure",
+  "description": "Hypoxic respiratory failure with ventilator support.",
+  "pulsePressure": 38,
+  "baseline": {
+    "vitals": {
+      "hrBpm": 84,
+      "spo2Pct": 96,
+      "respRpm": 14,
+      "mapMmhg": 82,
+      "tempC": 37.2
+    },
+    "devices": {
+      "ventOn": true
+    },
+    "fio2": 0.4
+  },
+  "fio2": {
+    "min": 0.21,
+    "max": 1,
+    "spo2BoostPerPoint": 12,
+    "spo2MaxBonus": 8
+  },
+  "targets": {
+    "ventOn": {
+      "hrBpm": 78,
+      "spo2Pct": 98.5,
+      "respRpm": 13,
+      "mapMmhg": 82
+    },
+    "ventOff": {
+      "hrBpm": 92,
+      "spo2Pct": 86,
+      "respRpm": 20,
+      "mapMmhg": 78
+    },
+    "hypoxiaHrGain": 1.4,
+    "hypoxiaRrGain": 0.8
+  },
+  "timeConstants": {
+    "spo2Sec": 6,
+    "hrSec": 10,
+    "rrSec": 8,
+    "mapSec": 14
+  },
+  "noise": {
+    "enabled": true,
+    "amplitude": {
+      "hrBpm": 0.6,
+      "spo2Pct": 0.3,
+      "respRpm": 0.4,
+      "mapMmhg": 0.7
+    }
+  },
+  "thresholds": {
+    "spo2": { "low": 95, "critical": 90 },
+    "map": { "low": 65, "critical": 55 },
+    "hr": { "high": 110 },
+    "rr": { "high": 22 }
+  },
+  "interventions": {
+    "bag": { "boost": 4, "decaySec": 8, "durationSec": 10 },
+    "fluids": { "mapBoost": 10, "decaySec": 18, "cooldownSec": 20, "residualFraction": 0.4 },
+    "pressor": { "mapBoost": 16, "hrDelta": 4 }
+  },
+  "objectives": {
+    "maintainSpo2Sec": 30,
+    "maintainMapSec": 30,
+    "maintainHrSec": 30,
+    "hrRange": { "min": 60, "max": 100 }
+  },
+  "alarms": {
+    "silenceDurationSec": 60
+  },
+  "trend": {
+    "windowSec": 5,
+    "slopeThresholds": {
+      "hrBpm": 0.6,
+      "spo2Pct": 0.12,
+      "respRpm": 0.3,
+      "mapMmhg": 0.5
+    }
+  },
+  "debug": {
+    "eventLogSize": 20
+  }
+}

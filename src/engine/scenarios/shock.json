@@ -1,0 +1,95 @@
+{
+  "id": "shock",
+  "name": "Shock",
+  "description": "Distributive shock with hypotension and compensatory tachycardia.",
+  "pulsePressure": 34,
+  "baseline": {
+    "vitals": {
+      "hrBpm": 108,
+      "spo2Pct": 96,
+      "respRpm": 18,
+      "mapMmhg": 70,
+      "tempC": 37.1
+    },
+    "devices": {
+      "ventOn": true
+    },
+    "fio2": 0.35,
+    "pressorDose": 0
+  },
+  "fio2": {
+    "min": 0.21,
+    "max": 1,
+    "spo2BoostPerPoint": 10,
+    "spo2MaxBonus": 6
+  },
+  "targets": {
+    "ventOn": {
+      "hrBpm": 105,
+      "spo2Pct": 97,
+      "respRpm": 18,
+      "mapMmhg": 70
+    },
+    "ventOff": {
+      "hrBpm": 112,
+      "spo2Pct": 90,
+      "respRpm": 22,
+      "mapMmhg": 66
+    },
+    "hypoxiaHrGain": 1.0,
+    "hypoxiaRrGain": 0.6
+  },
+  "timeConstants": {
+    "spo2Sec": 7,
+    "hrSec": 8,
+    "rrSec": 8,
+    "mapSec": 12
+  },
+  "noise": {
+    "enabled": true,
+    "amplitude": {
+      "hrBpm": 0.7,
+      "spo2Pct": 0.3,
+      "respRpm": 0.5,
+      "mapMmhg": 0.8
+    }
+  },
+  "thresholds": {
+    "spo2": { "low": 94, "critical": 88 },
+    "map": { "low": 65, "critical": 55 },
+    "hr": { "high": 110 },
+    "rr": { "high": 24 }
+  },
+  "interventions": {
+    "bag": { "boost": 3.5, "decaySec": 8, "durationSec": 10 },
+    "fluids": { "mapBoost": 12, "decaySec": 18, "cooldownSec": 20, "residualFraction": 0.45 },
+    "pressor": { "mapBoost": 20, "hrDelta": 5 }
+  },
+  "shock": {
+    "mapDriftTarget": 55,
+    "hrDriftTarget": 120,
+    "spo2DriftTarget": 94,
+    "detection": { "mapLow": 65, "hrHigh": 110, "durationSec": 10 }
+  },
+  "objectives": {
+    "maintainSpo2Sec": 30,
+    "maintainMapSec": 30,
+    "maintainHrSec": 30,
+    "hrRange": { "min": 60, "max": 110 }
+  },
+  "alarms": {
+    "silenceDurationSec": 60
+  },
+  "trend": {
+    "windowSec": 5,
+    "slopeThresholds": {
+      "hrBpm": 0.7,
+      "spo2Pct": 0.1,
+      "respRpm": 0.3,
+      "mapMmhg": 0.6
+    }
+  },
+  "debug": {
+    "eventLogSize": 20
+  }
+}

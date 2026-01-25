@@ -4,18 +4,22 @@ import {
   Color3,
   Material,
   PBRMaterial,
+  StandardMaterial,
   type AbstractMesh,
   type ArcRotateCamera,
   type Engine,
   type HighlightLayer,
   type Scene,
+  type TransformNode,
   Vector3
 } from "@babylonjs/core";
 import type { AdvancedDynamicTexture } from "@babylonjs/gui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startEngineLoop, stopEngineLoop } from "../../src/engine/store";
+import { usePatientEngine } from "../../src/engine/usePatientEngine";
 import { createEngine } from "./engine/createEngine";
 import { attachHotspotSystem, type HotspotEntry } from "./interactions/hotspotSystem";
+import { onHotspotRegistry } from "./interactions/hotspotRegistryEvents";
 import { configureCamera, createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import { getM3dDebugState, setM3dReady } from "./utils/m3dDebug";
@@ -28,6 +32,9 @@ const READY_FLASH_MS = 900;
 const IDLE_FREEZE_MS = 2000;
 const MAX_SCENE_DIMENSION = 20;
 const TARGET_SCENE_SIZE = 6;
+const VENT_GLOW = new Color3(0.2, 0.9, 0.4);
+const PRESSOR_GLOW = new Color3(0.3, 0.6, 1.0);
+const MONITOR_GLOW = new Color3(1.0, 0.2, 0.2);
 const isRenderableMesh = (mesh: AbstractMesh) => mesh.getTotalVertices?.() > 0 && mesh.isEnabled();
 const isUtilityMesh = (mesh: AbstractMesh) => {
   const name = mesh.name.toLowerCase();
@@ -45,6 +52,26 @@ const isValidHttpsUrl = (value: string | null) => {
   }
 };
 
+const collectMeshes = (node: AbstractMesh | TransformNode | null) => {
+  if (!node) {
+    return [] as AbstractMesh[];
+  }
+  if (node instanceof AbstractMesh) {
+    return [node];
+  }
+  const meshes: AbstractMesh[] = [];
+  node.getChildren().forEach((child) => {
+    if (child instanceof AbstractMesh) {
+      meshes.push(child);
+    }
+  });
+  return meshes;
+};
+
+const isEmissiveMaterial = (material: Material | null): material is StandardMaterial | PBRMaterial => {
+  return material instanceof StandardMaterial || material instanceof PBRMaterial;
+};
+
 const formatShareUrl = (glbUrl: string | null) => {
   if (typeof window === "undefined") {
     return "";
@@ -59,6 +86,7 @@ const formatShareUrl = (glbUrl: string | null) => {
 };
 
 export default function Viewer() {
+  const { state, config } = usePatientEngine();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
   const sceneRef = useRef<Scene | null>(null);
@@ -77,6 +105,27 @@ export default function Viewer() {
   const actionRouterCleanupRef = useRef<(() => void) | null>(null);
   const isNormalizedRef = useRef(false);
   const resizeRafRef = useRef<number | null>(null);
+  const worldSyncRef = useRef<{
+    ventMeshes: AbstractMesh[];
+    monitorMeshes: AbstractMesh[];
+    pressorMeshes: AbstractMesh[];
+    highlightLayer: HighlightLayer | null;
+    emissiveCache: Map<Material, Color3>;
+    lastVentOn: boolean | null;
+    lastPressorActive: boolean | null;
+    lastCriticalPulse: boolean | null;
+  }>({
+    ventMeshes: [],
+    monitorMeshes: [],
+    pressorMeshes: [],
+    highlightLayer: null,
+    emissiveCache: new Map(),
+    lastVentOn: null,
+    lastPressorActive: null,
+    lastCriticalPulse: null
+  });
+  const engineStateRef = useRef(state);
+  const configRef = useRef(config);
 
   const [isLoading, setIsLoading] = useState(true);
   const [progress, setProgress] = useState<LoadProgress | null>(null);
@@ -94,6 +143,14 @@ export default function Viewer() {
   });
 
   const shareUrl = useMemo(() => formatShareUrl(shareGlbParam), [shareGlbParam]);
+
+  useEffect(() => {
+    engineStateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
 
   const clearIdleTimer = () => {
     if (idleTimer.current) {
@@ -242,6 +299,37 @@ export default function Viewer() {
     markInteraction();
   }, [markInteraction, reframeScene]);
 
+  const cacheWorldMeshes = useCallback(
+    (registry: { entries: Array<{ id: string; nodeName: string }> }) => {
+      const scene = sceneRef.current;
+      if (!scene) {
+        return;
+      }
+      const findMeshGroup = (ids: string[]) => {
+        for (const id of ids) {
+          const entry = registry.entries.find((item) => item.id.toLowerCase() === id.toLowerCase());
+          const nodeName = entry?.nodeName ?? id;
+          const node =
+            scene.getMeshByName(nodeName) ??
+            scene.getTransformNodeByName(nodeName) ??
+            scene.getMeshByName(id) ??
+            scene.getTransformNodeByName(id) ??
+            null;
+          const meshes = collectMeshes(node);
+          if (meshes.length > 0) {
+            return meshes;
+          }
+        }
+        return [] as AbstractMesh[];
+      };
+
+      worldSyncRef.current.ventMeshes = findMeshGroup(["Ventilator", "ventilator", "vent", "HP__Ventilator"]);
+      worldSyncRef.current.monitorMeshes = findMeshGroup(["Monitor", "monitor", "PatientMonitor", "HP__Monitor"]);
+      worldSyncRef.current.pressorMeshes = findMeshGroup(["norepi_pump", "NorepiPump", "IVPump", "iv_fluids"]);
+    },
+    []
+  );
+
   const normalizeScene = useCallback(() => {
     const scene = sceneRef.current;
     if (!scene) {
@@ -340,6 +428,14 @@ export default function Viewer() {
       setPanel(null);
       selectedHotspotRef.current = null;
       highlightLayerRef.current?.removeAllMeshes();
+      const sync = worldSyncRef.current;
+      sync.ventMeshes = [];
+      sync.monitorMeshes = [];
+      sync.pressorMeshes = [];
+      sync.emissiveCache.clear();
+      sync.lastVentOn = null;
+      sync.lastPressorActive = null;
+      sync.lastCriticalPulse = null;
 
       scene.meshes.slice().forEach((mesh) => {
         if (mesh.name !== "camera" && mesh.name !== "hemi") {
@@ -457,6 +553,105 @@ export default function Viewer() {
     }, 250);
     return () => window.clearInterval(interval);
   }, [debugEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    return onHotspotRegistry((registry) => {
+      cacheWorldMeshes(registry);
+    });
+  }, [cacheWorldMeshes]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      const scene = sceneRef.current;
+      if (!scene) {
+        return;
+      }
+      const sync = worldSyncRef.current;
+      const engineState = engineStateRef.current;
+      const scenario = configRef.current;
+      if (!sync.highlightLayer) {
+        sync.highlightLayer = highlightLayerRef.current ?? new HighlightLayer("world-sync", scene);
+      }
+      const highlightLayer = sync.highlightLayer;
+
+      const setEmissive = (meshes: AbstractMesh[], color: Color3, intensity: number) => {
+        meshes.forEach((mesh) => {
+          const material = mesh.material ?? null;
+          if (!isEmissiveMaterial(material)) {
+            return;
+          }
+          if (!sync.emissiveCache.has(material)) {
+            sync.emissiveCache.set(material, material.emissiveColor.clone());
+          }
+          const emissive = material.emissiveColor ?? new Color3(0, 0, 0);
+          emissive.copyFrom(color).scaleInPlace(intensity);
+          material.emissiveColor = emissive;
+        });
+      };
+
+      const restoreEmissive = (meshes: AbstractMesh[]) => {
+        meshes.forEach((mesh) => {
+          const material = mesh.material ?? null;
+          if (!isEmissiveMaterial(material)) {
+            return;
+          }
+          const cached = sync.emissiveCache.get(material);
+          if (cached) {
+            material.emissiveColor = cached;
+          }
+        });
+      };
+
+      const setHighlight = (meshes: AbstractMesh[], color: Color3, enabled: boolean) => {
+        meshes.forEach((mesh) => {
+          if (enabled) {
+            highlightLayer.addMesh(mesh, color);
+          } else {
+            highlightLayer.removeMesh(mesh);
+          }
+        });
+      };
+
+      const ventOn = engineState.devices.ventOn;
+      if (sync.lastVentOn !== ventOn) {
+        if (ventOn) {
+          setEmissive(sync.ventMeshes, VENT_GLOW, 0.8);
+        } else {
+          restoreEmissive(sync.ventMeshes);
+        }
+        setHighlight(sync.ventMeshes, VENT_GLOW, ventOn);
+        sync.lastVentOn = ventOn;
+      }
+
+      const pressorActive = engineState.interventions.pressorDose > 0.01;
+      if (sync.lastPressorActive !== pressorActive) {
+        if (pressorActive) {
+          setEmissive(sync.pressorMeshes, PRESSOR_GLOW, 0.7);
+        } else {
+          restoreEmissive(sync.pressorMeshes);
+        }
+        setHighlight(sync.pressorMeshes, PRESSOR_GLOW, pressorActive);
+        sync.lastPressorActive = pressorActive;
+      }
+
+      const criticalSpo2 = engineState.vitals.spo2Pct <= scenario.thresholds.spo2.critical;
+      const shouldPulse = !ventOn && criticalSpo2;
+      if (shouldPulse) {
+        const pulse = 0.4 + 0.6 * Math.abs(Math.sin(performance.now() / 450));
+        setEmissive(sync.monitorMeshes, MONITOR_GLOW, pulse);
+      } else if (sync.lastCriticalPulse) {
+        restoreEmissive(sync.monitorMeshes);
+      }
+      sync.lastCriticalPulse = shouldPulse;
+    }, 200);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;

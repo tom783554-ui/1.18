@@ -1,7 +1,6 @@
 "use client";
 
-import { setVentOn } from "../../../src/engine/store";
-import { useEngineState } from "../../../src/engine/useEngineState";
+import { usePatientEngine } from "../../../src/engine/usePatientEngine";
 
 type PanelState = { title: string; id: string } | null;
 
@@ -10,35 +9,49 @@ type PanelsProps = {
   onClose: () => void;
 };
 
-const isVentilatorPanel = (panel: PanelState) => {
+const matchPanel = (panel: PanelState, matcher: (value: string) => boolean) => {
   if (!panel) {
     return false;
   }
   const id = panel.id.toLowerCase();
   const title = panel.title.toLowerCase();
-  return id.includes("vent") || title.includes("vent");
+  return matcher(id) || matcher(title);
 };
 
-const isMonitorPanel = (panel: PanelState) => {
-  if (!panel) {
-    return false;
-  }
-  const id = panel.id.toLowerCase();
-  const title = panel.title.toLowerCase();
-  return id.includes("monitor") || title.includes("monitor");
-};
+const isVentilatorPanel = (panel: PanelState) =>
+  matchPanel(panel, (value) => value.includes("vent"));
+
+const isMonitorPanel = (panel: PanelState) =>
+  matchPanel(panel, (value) => value.includes("monitor"));
+
+const isFio2Panel = (panel: PanelState) =>
+  matchPanel(panel, (value) => value.includes("fio2") || value.includes("oxygen"));
+
+const isBvmPanel = (panel: PanelState) =>
+  matchPanel(panel, (value) => value.includes("bvm") || value.includes("bag"));
+
+const isFluidsPanel = (panel: PanelState) =>
+  matchPanel(panel, (value) => value.includes("iv") || value.includes("fluid"));
+
+const isPressorPanel = (panel: PanelState) =>
+  matchPanel(panel, (value) => value.includes("norepi") || value.includes("pressor"));
 
 const formatUpdatedTime = (lastUpdatedMs: number) =>
   new Date(lastUpdatedMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 export default function Panels({ panel, onClose }: PanelsProps) {
-  const engineState = useEngineState();
-  const { vitals, devices, lastUpdatedMs } = engineState;
+  const { state, config, dispatch } = usePatientEngine();
+  const { vitals, devices, lastUpdatedMs, interventions } = state;
   const updatedLabel = formatUpdatedTime(lastUpdatedMs);
 
   if (!panel) {
     return null;
   }
+
+  const bolusDisabled = interventions.bolusCooldownSec > 0;
+  const bolusLabel = bolusDisabled
+    ? `Bolus ready in ${Math.ceil(interventions.bolusCooldownSec)}s`
+    : "Bolus 500 mL";
 
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label="Hotspot panel">
@@ -65,7 +78,7 @@ export default function Panels({ panel, onClose }: PanelsProps) {
               <button
                 type="button"
                 className="action toggle"
-                onClick={() => setVentOn(!devices.ventOn)}
+                onClick={() => dispatch({ type: "SET_VENT", on: !devices.ventOn })}
               >
                 ON/OFF
               </button>
@@ -73,18 +86,79 @@ export default function Panels({ panel, onClose }: PanelsProps) {
                 <button
                   type="button"
                   className={devices.ventOn ? "action active" : "action"}
-                  onClick={() => setVentOn(true)}
+                  onClick={() => dispatch({ type: "SET_VENT", on: true })}
                 >
                   Turn On
                 </button>
                 <button
                   type="button"
                   className={!devices.ventOn ? "action active" : "action"}
-                  onClick={() => setVentOn(false)}
+                  onClick={() => dispatch({ type: "SET_VENT", on: false })}
                 >
                   Turn Off
                 </button>
               </div>
+            </div>
+          ) : null}
+          {isFio2Panel(panel) ? (
+            <div className="section">
+              <div className="section-title">FiO₂ Control</div>
+              <div className="status-row">
+                <span>Current</span>
+                <span className="value">{Math.round(interventions.fio2 * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={config.fio2.min}
+                max={config.fio2.max}
+                step={0.01}
+                value={interventions.fio2}
+                onChange={(event) =>
+                  dispatch({ type: "SET_FIO2", fio2: Number(event.target.value) })
+                }
+              />
+            </div>
+          ) : null}
+          {isBvmPanel(panel) ? (
+            <div className="section">
+              <div className="section-title">BVM Rescue</div>
+              <p className="helper">Bagging provides an immediate SpO₂ boost that decays.</p>
+              <button type="button" className="action" onClick={() => dispatch({ type: "BAG" })}>
+                Bag Patient
+              </button>
+            </div>
+          ) : null}
+          {isFluidsPanel(panel) ? (
+            <div className="section">
+              <div className="section-title">IV Fluids</div>
+              <p className="helper">Transient MAP rise with partial decay.</p>
+              <button
+                type="button"
+                className={bolusDisabled ? "action disabled" : "action"}
+                onClick={() => dispatch({ type: "BOLUS" })}
+                disabled={bolusDisabled}
+              >
+                {bolusLabel}
+              </button>
+            </div>
+          ) : null}
+          {isPressorPanel(panel) ? (
+            <div className="section">
+              <div className="section-title">Norepinephrine</div>
+              <div className="status-row">
+                <span>Dose</span>
+                <span className="value">{Math.round(interventions.pressorDose * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={interventions.pressorDose}
+                onChange={(event) =>
+                  dispatch({ type: "SET_PRESSOR", dose: Number(event.target.value) })
+                }
+              />
             </div>
           ) : null}
           {isMonitorPanel(panel) ? (
@@ -104,10 +178,8 @@ export default function Panels({ panel, onClose }: PanelsProps) {
                   <span className="value">{Math.round(vitals.respRpm)} rpm</span>
                 </div>
                 <div className="vital">
-                  <span className="label">BP</span>
-                  <span className="value">
-                    {Math.round(vitals.bpSys)}/{Math.round(vitals.bpDia)} mmHg
-                  </span>
+                  <span className="label">MAP</span>
+                  <span className="value">{Math.round(vitals.mapMmhg)} mmHg</span>
                 </div>
                 <div className="vital">
                   <span className="label">Temp</span>
@@ -117,7 +189,12 @@ export default function Panels({ panel, onClose }: PanelsProps) {
               <div className="updated">Updated {updatedLabel}</div>
             </div>
           ) : null}
-          {!isVentilatorPanel(panel) && !isMonitorPanel(panel) ? (
+          {!isVentilatorPanel(panel) &&
+          !isMonitorPanel(panel) &&
+          !isFio2Panel(panel) &&
+          !isBvmPanel(panel) &&
+          !isFluidsPanel(panel) &&
+          !isPressorPanel(panel) ? (
             <div className="hint">Tap another label to switch. Tap empty space to deselect.</div>
           ) : (
             <div className="hint subtle">Tap empty space to return to the room.</div>
@@ -243,6 +320,10 @@ export default function Panels({ panel, onClose }: PanelsProps) {
           border-color: rgba(59, 130, 246, 0.7);
           background: rgba(59, 130, 246, 0.2);
         }
+        .action.disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
         .vitals-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -273,6 +354,14 @@ export default function Panels({ panel, onClose }: PanelsProps) {
         }
         .hint.subtle {
           color: rgba(248, 250, 252, 0.55);
+        }
+        .helper {
+          font-size: 12px;
+          color: rgba(226, 232, 240, 0.7);
+          margin: 0;
+        }
+        input[type="range"] {
+          width: 100%;
         }
       `}</style>
     </div>

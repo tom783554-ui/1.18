@@ -27,7 +27,7 @@ import {
   setHotspotSelection
 } from "./hotspotProjectionStore";
 import { getEngineState, subscribe } from "../../../src/engine/store";
-import type { Vitals } from "../../../src/engine/types";
+import type { Vitals } from "../../../src/engine/patientState";
 import { setM3dPick } from "../utils/m3dDebug";
 
 const PANEL_EVENT = "m3d:panel" as const;
@@ -263,8 +263,11 @@ const createTestHotspots = (scene: Scene, camera: Camera): TransformNode[] => {
   const testHotspots = [
     { id: "Ventilator", label: "Ventilator", offset: new Vector3(-0.42, 0.18, 0.02) },
     { id: "Monitor", label: "Patient Monitor", offset: new Vector3(-0.08, 0.34, 0.12) },
+    { id: "fio2_control", label: "FiO₂ Control", offset: new Vector3(-0.28, 0.12, 0.08) },
+    { id: "bvm", label: "Bag Valve Mask", offset: new Vector3(-0.06, 0.22, -0.04) },
     { id: "Suction", label: "Suction Regulator", offset: new Vector3(0.32, 0.22, -0.04) },
-    { id: "IVPump", label: "IV Pump", offset: new Vector3(0.18, 0.05, 0.1) },
+    { id: "iv_fluids", label: "IV Fluids", offset: new Vector3(0.18, 0.05, 0.1) },
+    { id: "norepi_pump", label: "Norepi Pump", offset: new Vector3(0.26, 0.12, 0.18) },
     { id: "Oxygen", label: "Oxygen Flow", offset: new Vector3(0.46, -0.08, -0.08) },
     { id: "BedRail", label: "Bed Rail", offset: new Vector3(-0.2, -0.18, -0.12) }
   ];
@@ -504,13 +507,13 @@ export function attachHotspotSystem({
 
   const formatMonitorVitals = (vitals: Vitals | null) => {
     if (!vitals) {
-      return "HR -- bpm\nSpO₂ --%\nRR -- /min\nBP --/--\nTemp --°C";
+      return "HR -- bpm\nSpO₂ --%\nRR -- /min\nMAP -- mmHg\nTemp --°C";
     }
     return [
       `HR ${Math.round(vitals.hrBpm)} bpm`,
       `SpO₂ ${vitals.spo2Pct.toFixed(1)}%`,
       `RR ${Math.round(vitals.respRpm)} /min`,
-      `BP ${Math.round(vitals.bpSys)}/${Math.round(vitals.bpDia)}`,
+      `MAP ${Math.round(vitals.mapMmhg)} mmHg`,
       `Temp ${vitals.tempC.toFixed(1)}°C`
     ].join("\n");
   };
