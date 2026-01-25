@@ -1,59 +1,75 @@
 import type { HotspotEntry } from "../../../app/viewer/interactions/hotspotSystem";
-import { updateEngineState, getEngineState } from "../../engine/store";
-import { toast } from "../../engine/toast";
-import { expandCompactManifest } from "./expandCompactManifest";
+import {
+  applyBvm,
+  applyDefibShock,
+  getEngineState,
+  setDefibCharged,
+  setFio2,
+  setVentOn
+} from "../../engine/store";
+import { dispatchSimAction } from "../../engine/simStore";
+import { hotspotCatalog } from "../../interactions/hotspotCatalog";
+
+const formatFallbackName = (id: string, label: string) => `HP__${id}__${label}`;
 
 export function buildCodeBlueHotspotEntries(): HotspotEntry[] {
-  const { nodes } = expandCompactManifest();
+  const entries: HotspotEntry[] = [];
 
-  return nodes
-    .filter((node) => node.kind === "HOTSPOT" || node.kind === "INTERACTABLE")
-    .map((node) => {
-      const name = node.name;
-      const onClick = () => {
-        let toastMessage = "";
-
-        updateEngineState((engineState) => {
-          if (name.startsWith("DX_")) {
-            engineState.dx = name;
-            toastMessage = `DX set: ${name}`;
-            return;
-          }
-          if (name.startsWith("STEP_")) {
-            const steps = engineState.steps ?? [];
-            if (!steps.includes(name)) {
-              steps.push(name);
-            }
-            engineState.steps = steps;
-            toastMessage = `STEP: ${name}`;
-            return;
-          }
-          if (name.startsWith("ROLE_")) {
-            engineState.roleFocus = name;
-            toastMessage = `ROLE: ${name}`;
-            return;
-          }
-          toastMessage = `CLICK: ${name}`;
-        });
-
-        if (toastMessage) {
-          toast(toastMessage);
+  hotspotCatalog.forEach((item) => {
+    const onClick = () => {
+      const state = getEngineState();
+      switch (item.onActivateActionKind) {
+        case "VENT_TOGGLE": {
+          setVentOn(!state.ventOn);
+          dispatchSimAction({
+            sourceHotspotId: item.id,
+            kind: "VENT_TOGGLE",
+            payload: { ventOn: !state.ventOn }
+          });
+          return;
         }
+        case "VENT_FIO2_UP": {
+          const next = Math.min(1, state.fio2 + 0.05);
+          setFio2(next);
+          dispatchSimAction({ sourceHotspotId: item.id, kind: "VENT_FIO2_UP", payload: { fio2: next } });
+          return;
+        }
+        case "VENT_FIO2_DOWN": {
+          const next = Math.max(0.21, state.fio2 - 0.05);
+          setFio2(next);
+          dispatchSimAction({ sourceHotspotId: item.id, kind: "VENT_FIO2_DOWN", payload: { fio2: next } });
+          return;
+        }
+        case "AIRWAY_BAGVALVE": {
+          applyBvm();
+          dispatchSimAction({ sourceHotspotId: item.id, kind: "AIRWAY_BAGVALVE" });
+          return;
+        }
+        case "DEFIB_CHARGE": {
+          setDefibCharged(true);
+          dispatchSimAction({ sourceHotspotId: item.id, kind: "DEFIB_CHARGE" });
+          return;
+        }
+        case "DEFIB_SHOCK": {
+          applyDefibShock();
+          dispatchSimAction({ sourceHotspotId: item.id, kind: "DEFIB_SHOCK" });
+          return;
+        }
+        default:
+          dispatchSimAction({ sourceHotspotId: item.id, kind: item.onActivateActionKind });
+      }
+    };
 
-        const engineState = getEngineState();
-        console.log({
-          t: Date.now(),
-          name,
-          dx: engineState.dx,
-          steps: engineState.steps?.length ?? 0
-        });
-      };
-
-      return {
-        meshName: name,
-        label: name,
-        category: node.category ?? "misc",
+    const meshNames = [...item.meshNameHints, formatFallbackName(item.id, item.label)];
+    meshNames.forEach((meshName) => {
+      entries.push({
+        meshName,
+        label: item.label,
+        category: item.kind,
         onClick
-      } as HotspotEntry;
+      });
     });
+  });
+
+  return entries;
 }

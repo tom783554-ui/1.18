@@ -1,5 +1,6 @@
 import { SceneLoader, TransformNode, Vector3, type Scene } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
+import { ICU_PRETTY_OVERRIDE_GLB_PATH, ICU_REAL_GLB_PATH } from "../../../src/config/assets";
 
 export type LoadProgress = {
   pct?: number;
@@ -8,7 +9,7 @@ export type LoadProgress = {
   statusText?: string;
 };
 
-export const DEFAULT_GLB_PATH = "/assets/main/main.glb";
+export const DEFAULT_GLB_PATH = ICU_PRETTY_OVERRIDE_GLB_PATH || ICU_REAL_GLB_PATH;
 
 const LOAD_TIMEOUT_MS = 15000;
 

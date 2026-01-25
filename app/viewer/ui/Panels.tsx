@@ -1,6 +1,7 @@
 "use client";
 
 import { applyBvm, applyDefibShock, setDefibCharged, setFio2, setVentOn } from "../../../src/engine/store";
+import { dispatchSimAction } from "../../../src/engine/simStore";
 import { useEngineState } from "../../../src/engine/useEngineState";
 import scenario from "../../../src/engine/scenarios/respFailure.json";
 
@@ -81,7 +82,11 @@ export default function Panels({ panel, onClose }: PanelsProps) {
               <button
                 type="button"
                 className="action toggle"
-                onClick={() => setVentOn(!engineState.ventOn)}
+                onClick={() => {
+                  const next = !engineState.ventOn;
+                  setVentOn(next);
+                  dispatchSimAction({ sourceHotspotId: "H_VENT_POWER", kind: "VENT_TOGGLE", payload: { ventOn: next } });
+                }}
               >
                 ON/OFF
               </button>
@@ -89,14 +94,20 @@ export default function Panels({ panel, onClose }: PanelsProps) {
                 <button
                   type="button"
                   className={engineState.ventOn ? "action active" : "action"}
-                  onClick={() => setVentOn(true)}
+                  onClick={() => {
+                    setVentOn(true);
+                    dispatchSimAction({ sourceHotspotId: "H_VENT_POWER", kind: "VENT_TOGGLE", payload: { ventOn: true } });
+                  }}
                 >
                   Turn On
                 </button>
                 <button
                   type="button"
                   className={!engineState.ventOn ? "action active" : "action"}
-                  onClick={() => setVentOn(false)}
+                  onClick={() => {
+                    setVentOn(false);
+                    dispatchSimAction({ sourceHotspotId: "H_VENT_POWER", kind: "VENT_TOGGLE", payload: { ventOn: false } });
+                  }}
                 >
                   Turn Off
                 </button>
@@ -110,7 +121,10 @@ export default function Panels({ panel, onClose }: PanelsProps) {
                   value={fio2Pct}
                   onChange={(event) => {
                     const nextPct = Number(event.target.value);
-                    setFio2(nextPct / 100);
+                    const next = nextPct / 100;
+                    setFio2(next);
+                    const kind = next >= engineState.fio2 ? "VENT_FIO2_UP" : "VENT_FIO2_DOWN";
+                    dispatchSimAction({ sourceHotspotId: "H_VENT_FIO2_UP", kind, payload: { fio2: next } });
                   }}
                 />
                 <span className="slider-value">{fio2Pct}%</span>
@@ -119,7 +133,14 @@ export default function Panels({ panel, onClose }: PanelsProps) {
                 Higher FiO₂ increases oxygenation rate and ceiling.
               </div>
               <div className="section-title">Bag-Valve-Mask</div>
-              <button type="button" className="action bvm" onClick={() => applyBvm()}>
+              <button
+                type="button"
+                className="action bvm"
+                onClick={() => {
+                  applyBvm();
+                  dispatchSimAction({ sourceHotspotId: "H_AIRWAY_BAGVALVE", kind: "AIRWAY_BAGVALVE" });
+                }}
+              >
                 Bag Patient
               </button>
             </div>
@@ -161,14 +182,20 @@ export default function Panels({ panel, onClose }: PanelsProps) {
                 <button
                   type="button"
                   className={defibReady ? "action active" : "action"}
-                  onClick={() => setDefibCharged(!defibReady)}
+                  onClick={() => {
+                    setDefibCharged(!defibReady);
+                    dispatchSimAction({ sourceHotspotId: "H_DEFIB_CHARGE", kind: "DEFIB_CHARGE" });
+                  }}
                 >
                   {defibReady ? "Disarm" : "Charge"}
                 </button>
                 <button
                   type="button"
                   className="action"
-                  onClick={() => applyDefibShock()}
+                  onClick={() => {
+                    applyDefibShock();
+                    dispatchSimAction({ sourceHotspotId: "H_DEFIB_SHOCK", kind: "DEFIB_SHOCK" });
+                  }}
                   disabled={!defibReady}
                 >
                   Deliver Shock

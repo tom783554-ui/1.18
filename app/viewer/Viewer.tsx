@@ -25,6 +25,8 @@ import Hud from "./ui/Hud";
 import LoadingOverlay from "./ui/LoadingOverlay";
 import Panels from "./ui/Panels";
 import ZoomTestOverlay from "./ui/ZoomTestOverlay";
+import { ensureFallbackHotspots } from "../../src/interactions/fallbackHotspotPucks";
+import { initializeSimEngine, randomizeDiagnosis, tickSim } from "../../src/engine/simStore";
 
 const READY_FLASH_MS = 900;
 const IDLE_FREEZE_MS = 2000;
@@ -87,7 +89,6 @@ export default function Viewer() {
   const [missingMainDetails, setMissingMainDetails] = useState<string | null>(null);
   const [error, setError] = useState<{ title: string; details?: string } | null>(null);
   const [shareGlbParam, setShareGlbParam] = useState<string | null>(null);
-  const [placeholderCount, setPlaceholderCount] = useState(0);
   const [panel, setPanel] = useState<{ title: string; id: string } | null>(null);
   const [debugEnabled, setDebugEnabled] = useState(false);
   const [debugInfo, setDebugInfo] = useState<{ lastHotspotId: string; lastPickMeshName: string }>({
@@ -338,7 +339,6 @@ export default function Viewer() {
         existingRouterCleanup();
       }
       actionRouterCleanupRef.current = null;
-      setPlaceholderCount(0);
       setPanel(null);
       selectedHotspotRef.current = null;
       highlightLayerRef.current?.removeAllMeshes();
@@ -358,10 +358,10 @@ export default function Viewer() {
         await loadMainGlb(scene, url, (update) => setProgress({ ...update }));
         await scene.whenReadyAsync();
         setM3dReady(true);
+        ensureFallbackHotspots(scene);
         const { wirePlaceholders } = await import("./interactions/placeholders");
         const wired = wirePlaceholders(scene);
         placeholderCleanupRef.current = wired.dispose;
-        setPlaceholderCount(wired.count);
         normalizeScene();
         reframeScene();
         const { attachActionRouter } = await import("./interactions/actionRouter");
@@ -432,6 +432,10 @@ export default function Viewer() {
   }, []);
 
   useEffect(() => {
+    initializeSimEngine("dx_legionella");
+  }, []);
+
+  useEffect(() => {
     const state = getM3dDebugState();
     if (state) {
       setDebugInfo({
@@ -474,6 +478,15 @@ export default function Viewer() {
     setM3dReady(false);
     sceneRef.current = scene;
     cameraRef.current = camera;
+
+
+    let lastTickMs = performance.now();
+    const tickObserver = scene.onBeforeRenderObservable.add(() => {
+      const now = performance.now();
+      const dt = now - lastTickMs;
+      lastTickMs = now;
+      tickSim(dt);
+    });
 
     const { version, nodes } = expandCompactManifest();
     const entries = buildCodeBlueHotspotEntries();
@@ -561,6 +574,7 @@ export default function Viewer() {
         window.cancelAnimationFrame(resizeRafRef.current);
         resizeRafRef.current = null;
       }
+      scene.onBeforeRenderObservable.remove(tickObserver);
       hotspotSystemRef.current?.dispose();
       hotspotSystemRef.current = null;
       cleanupScalingRef.current?.();
@@ -573,7 +587,12 @@ export default function Viewer() {
   return (
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
-      <Hud placeholderCount={placeholderCount} />
+      <Hud
+        onNewRun={() => {
+          const seed = Math.floor(Math.random() * 10000);
+          randomizeDiagnosis(seed);
+        }}
+      />
       <Panels panel={panel} onClose={clearSelection} />
       <ZoomTestOverlay
         scene={sceneRef.current}

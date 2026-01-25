@@ -1,0 +1,37 @@
+import { Vector3 } from "@babylonjs/core";
+import type { HotspotId } from "../engine/types";
+
+export const fallbackHotspotLayout: Record<HotspotId, Vector3> = {
+  H_AIRWAY_BAGVALVE: new Vector3(-0.6, 1.1, -0.4),
+  H_AIRWAY_INTUBATE: new Vector3(-0.5, 1.2, -0.35),
+  H_AIRWAY_SUCTION: new Vector3(-0.7, 1.0, -0.2),
+  H_VENT_POWER: new Vector3(-1.1, 1.0, -0.6),
+  H_VENT_FIO2_UP: new Vector3(-1.2, 0.9, -0.5),
+  H_VENT_FIO2_DOWN: new Vector3(-1.2, 0.8, -0.4),
+  H_VENT_PEEP_UP: new Vector3(-1.0, 0.85, -0.35),
+  H_VENT_PEEP_DOWN: new Vector3(-1.0, 0.75, -0.25),
+  H_MONITOR_CHECK_RHYTHM: new Vector3(0.6, 1.15, -0.35),
+  H_DEFIB_SHOCK: new Vector3(0.8, 0.9, -0.1),
+  H_DEFIB_CHARGE: new Vector3(0.75, 0.8, -0.2),
+  H_CPR_START: new Vector3(0.1, 0.85, -0.1),
+  H_CPR_STOP: new Vector3(0.2, 0.8, -0.2),
+  H_MED_EPI: new Vector3(0.9, 0.7, 0.0),
+  H_MED_AMIO: new Vector3(0.95, 0.6, 0.1),
+  H_MED_ANTIBIOTICS: new Vector3(1.0, 0.5, 0.2),
+  H_MED_DIURETIC: new Vector3(1.05, 0.45, 0.25),
+  H_MED_ANTIPLATELET: new Vector3(0.85, 0.55, 0.15),
+  H_IV_FLUID_BOLUS: new Vector3(0.8, 0.5, 0.4),
+  H_PRESSOR_START: new Vector3(0.95, 0.45, 0.45),
+  H_PRESSOR_TITRATE_UP: new Vector3(1.1, 0.4, 0.5),
+  H_BLOOD_TRANSFUSE: new Vector3(0.85, 0.35, 0.6),
+  H_LABS_ABG: new Vector3(-0.3, 0.4, 1.1),
+  H_LABS_CBC_BMP_TROP: new Vector3(-0.15, 0.35, 1.15),
+  H_IMAGING_CXR: new Vector3(0.0, 0.3, 1.2),
+  H_IMAGING_FAST: new Vector3(0.2, 0.35, 1.15),
+  H_CALL_RRT: new Vector3(0.5, 0.4, 1.05),
+  H_CALL_CATHLAB: new Vector3(0.6, 0.35, 1.1),
+  H_CALL_OR: new Vector3(0.7, 0.3, 1.15),
+  H_CALL_NEURO: new Vector3(0.8, 0.25, 1.2),
+  H_CHECK_GLUCOSE: new Vector3(-0.2, 0.3, 1.05),
+  H_CHECK_TEMP: new Vector3(-0.1, 0.25, 1.1)
+};
