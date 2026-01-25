@@ -14,7 +14,7 @@ export type ScenarioVitals = {
 };
 
 const MODE_OPTIONS = ["VC", "PC", "SIMV", "PS", "CPAP"];
-const TICK_MS = 1000;
+const TICK_MS = 500;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const jitter = (value: number, range: number) => value + (Math.random() - 0.5) * range;

@@ -21,23 +21,9 @@ import {
 } from "@babylonjs/gui";
 import { emitPick } from "./m3dEvents";
 import { emitHotspotRegistry } from "./hotspotRegistryEvents";
+import { emitPanelClose, emitPanelOpen } from "./panelEvents";
 import { onScenarioVitals, type ScenarioVitals } from "../scenario/scenarioEngine";
 import { setM3dPick } from "../utils/m3dDebug";
-
-const PANEL_EVENT = "m3d:panel" as const;
-const emitPanelClose = () => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: false, title: "", id: "" } }));
-};
-
-const emitPanelOpen = (title: string, id: string) => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: true, title, id } }));
-};
 
 export type HotspotEntry = {
   prefix: string;
@@ -56,6 +42,7 @@ type HotspotSystemOptions = {
   uiRef: { current: AdvancedDynamicTexture | null };
   highlightLayerRef: { current: HighlightLayer | null };
   selectedRef: { current: HotspotEntry | null };
+  onSelect?: (entry: HotspotEntry, pickedMesh: AbstractMesh | null) => void;
   onDeselect?: () => void;
 };
 
@@ -395,6 +382,7 @@ export function attachHotspotSystem({
   const highlightLayer = ensureHighlightLayer(scene, highlightLayerRef);
   let hotspots: HotspotEntry[] = [];
   let latestVitals: ScenarioVitals | null = null;
+  let pingStart = 0;
   const unsubscribeVitals = onScenarioVitals((vitals) => {
     latestVitals = vitals;
   });
@@ -426,10 +414,12 @@ export function attachHotspotSystem({
     if (highlightMesh) {
       highlightLayer.addMesh(highlightMesh, Color3.White());
     }
+    pingStart = typeof performance === "undefined" ? Date.now() : performance.now();
     hud.title.text = entry.label || entry.id;
     updateHudVisibility(true);
     emitPanelOpen(entry.label || entry.id, entry.id);
     setM3dPick(entry.id, pickedMesh?.name ?? entry.pickMesh.name);
+    onSelect?.(entry, pickedMesh ?? entry.pickMesh);
   };
 
   const resolveHotspotFromMesh = (mesh: AbstractMesh | null | undefined) => {
@@ -529,6 +519,19 @@ export function attachHotspotSystem({
 
     hud.panel.leftInPixels = clampedLeft;
     hud.panel.topInPixels = clampedTop;
+
+    const now = typeof performance === "undefined" ? Date.now() : performance.now();
+    const pingElapsed = now - pingStart;
+    if (pingElapsed < 1200) {
+      const pulse = Math.sin((pingElapsed / 1200) * Math.PI);
+      hud.marker.scaleX = 1 + pulse * 0.6;
+      hud.marker.scaleY = 1 + pulse * 0.6;
+      hud.marker.alpha = 0.5 + pulse * 0.5;
+    } else {
+      hud.marker.scaleX = 1;
+      hud.marker.scaleY = 1;
+      hud.marker.alpha = 1;
+    }
 
     if (isMonitor) {
       hud.title.text = "Monitor";

@@ -18,6 +18,7 @@ import { attachHotspotSystem, type HotspotEntry } from "./interactions/hotspotSy
 import { configureCamera, createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import { getM3dDebugState, setM3dReady } from "./utils/m3dDebug";
+import { setSelectedHotspot, updateHotspotProjection } from "./utils/hotspotScreenSync";
 import Hud from "./ui/Hud";
 import LoadingOverlay from "./ui/LoadingOverlay";
 import Panels from "./ui/Panels";
@@ -143,6 +144,7 @@ export default function Viewer() {
   const clearSelection = useCallback(() => {
     setPanel(null);
     selectedHotspotRef.current = null;
+    setSelectedHotspot(null, null);
     highlightLayerRef.current?.removeAllMeshes();
   }, []);
 
@@ -452,7 +454,7 @@ export default function Viewer() {
         };
       });
     };
-    const interval = window.setInterval(tick, 2000);
+    const interval = window.setInterval(tick, 500);
     return () => window.clearInterval(interval);
   }, []);
 
@@ -506,6 +508,9 @@ export default function Viewer() {
       uiRef,
       highlightLayerRef,
       selectedRef: selectedHotspotRef,
+      onSelect: (entry, pickedMesh) => {
+        setSelectedHotspot(pickedMesh ?? entry.pickMesh, entry.id);
+      },
       onDeselect: () => {
         resetCamera();
         clearSelection();
@@ -521,6 +526,7 @@ export default function Viewer() {
 
     engine.runRenderLoop(() => {
       scene.render();
+      updateHotspotProjection({ engine, camera });
     });
 
     const handleResize = () => {
@@ -588,7 +594,7 @@ export default function Viewer() {
   return (
     <div className="viewer">
       <canvas ref={canvasRef} className="canvas" />
-      <Hud engine={engineRef.current} scene={sceneRef.current} placeholderCount={placeholderCount} />
+      <Hud engine={engineRef.current} scene={sceneRef.current} />
       <Panels
         panel={panel}
         onClose={clearSelection}
