@@ -1,4 +1,4 @@
-import { SceneLoader, type Scene } from "@babylonjs/core";
+import { SceneLoader, TransformNode, Vector3, type Scene } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 
 export type LoadProgress = {
@@ -42,6 +42,7 @@ export const loadMainGlb = async (
 ) => {
   try {
     const { rootUrl, file } = splitUrl(url);
+    const existingRootNodes = new Set(scene.rootNodes);
     await withTimeout(
       (async () => {
         await SceneLoader.AppendAsync(
@@ -70,6 +71,14 @@ export const loadMainGlb = async (
           ".glb"
         );
         await scene.whenReadyAsync();
+        const newRootNodes = scene.rootNodes.filter((node) => !existingRootNodes.has(node));
+        if (newRootNodes.length > 0) {
+          const glbRoot = new TransformNode("glbRoot", scene);
+          glbRoot.rotation = new Vector3(Math.PI, 0, 0);
+          newRootNodes.forEach((node) => {
+            node.parent = glbRoot;
+          });
+        }
         console.log("[GLB] loaded", { meshes: scene.meshes.length, url });
       })(),
       LOAD_TIMEOUT_MS,
