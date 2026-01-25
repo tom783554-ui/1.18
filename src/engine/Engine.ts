@@ -25,7 +25,10 @@ export class Engine {
       bvmActive: false,
       bvmBoostUntil: null,
       alerts: [],
-      objectives: createInitialObjectives(scenarioConfig)
+      objectives: createInitialObjectives(scenarioConfig),
+      dx: null,
+      steps: [],
+      roleFocus: null
     };
     const withObjectives = {
       ...initial,

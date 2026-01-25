@@ -15,7 +15,9 @@ import type { AdvancedDynamicTexture } from "@babylonjs/gui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startEngineLoop, stopEngineLoop } from "../../src/engine/store";
 import { createEngine } from "./engine/createEngine";
-import { attachHotspotSystem, type HotspotEntry } from "./interactions/hotspotSystem";
+import { attachHotspotSystem, type HotspotMeshEntry } from "./interactions/hotspotSystem";
+import { buildCodeBlueHotspotEntries } from "../../src/sim/codeblue/buildCodeBlueHotspotEntries";
+import { expandCompactManifest } from "../../src/sim/codeblue/expandCompactManifest";
 import { configureCamera, createScene } from "./scene/createScene";
 import { DEFAULT_GLB_PATH, loadMainGlb, type LoadProgress } from "./load/loadMainGlb";
 import { getM3dDebugState, setM3dReady } from "./utils/m3dDebug";
@@ -65,7 +67,7 @@ export default function Viewer() {
   const cameraRef = useRef<ArcRotateCamera | null>(null);
   const uiRef = useRef<AdvancedDynamicTexture | null>(null);
   const highlightLayerRef = useRef<HighlightLayer | null>(null);
-  const selectedHotspotRef = useRef<HotspotEntry | null>(null);
+  const selectedHotspotRef = useRef<HotspotMeshEntry | null>(null);
   const hotspotSystemRef = useRef<ReturnType<typeof attachHotspotSystem> | null>(null);
   const cameraDefaults = useRef<{ alpha: number; beta: number; radius: number; target: [number, number, number] } | null>(
     null
@@ -473,12 +475,22 @@ export default function Viewer() {
     sceneRef.current = scene;
     cameraRef.current = camera;
 
+    const { version, nodes } = expandCompactManifest();
+    const entries = buildCodeBlueHotspotEntries();
+    console.log(`[CodeBlue] compact=${version} expanded=${nodes.length} registered=${entries.length}`);
+    if (entries.length < 150) {
+      console.warn("[CodeBlue] hotspot registry below expected count", {
+        registered: entries.length
+      });
+    }
+
     hotspotSystemRef.current = attachHotspotSystem({
       scene,
       camera,
       uiRef,
       highlightLayerRef,
       selectedRef: selectedHotspotRef,
+      entries,
       onDeselect: () => {
         resetCamera();
         clearSelection();

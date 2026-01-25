@@ -8,6 +8,7 @@ import {
 } from "../interactions/hotspotProjectionStore";
 import { useEngineState } from "../../../src/engine/useEngineState";
 import { AlertSeverity } from "../../../src/engine/patientState";
+import { TOAST_EVENT } from "../../../src/engine/toast";
 
 type HudProps = {
   placeholderCount?: number;
@@ -28,6 +29,8 @@ export default function Hud({ placeholderCount }: HudProps) {
   const engineState = useEngineState();
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [anchor, setAnchor] = useState({ x: 0, y: 0 });
+  const [lastToast, setLastToast] = useState("");
+  const [toastVisible, setToastVisible] = useState(false);
   const alertAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const projection = useSyncExternalStore(
@@ -51,6 +54,34 @@ export default function Hud({ placeholderCount }: HudProps) {
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    let timer: number | null = null;
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<{ message?: string }>;
+      if (!custom.detail?.message) {
+        return;
+      }
+      setLastToast(custom.detail.message);
+      setToastVisible(true);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+      timer = window.setTimeout(() => {
+        setToastVisible(false);
+      }, 2000);
+    };
+    window.addEventListener(TOAST_EVENT, handler as EventListener);
+    return () => {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+      window.removeEventListener(TOAST_EVENT, handler as EventListener);
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -100,6 +131,9 @@ export default function Hud({ placeholderCount }: HudProps) {
 
   return (
     <div className="hud-root">
+      <div className={`hud-toast ${toastVisible ? "show" : ""}`} role="status" aria-live="polite">
+        {lastToast}
+      </div>
       <div className="hud-top">
         <div className="hud-scenario">
           <div className="scenario-label">Scenario</div>
@@ -212,6 +246,27 @@ export default function Hud({ placeholderCount }: HudProps) {
           border-radius: 14px;
           padding: 10px 14px;
           backdrop-filter: blur(10px);
+        }
+        .hud-toast {
+          position: absolute;
+          top: 72px;
+          left: 50%;
+          transform: translateX(-50%);
+          padding: 8px 14px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 600;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          background: rgba(15, 23, 42, 0.9);
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          color: #f8fafc;
+          opacity: 0;
+          transition: opacity 0.2s ease;
+          pointer-events: none;
+        }
+        .hud-toast.show {
+          opacity: 1;
         }
         .hud-scenario {
           display: grid;

@@ -15,6 +15,11 @@ export const getEngine = () => engine;
 
 export const getEngineState = (): PatientState => engine.getState();
 
+export const updateEngineState = (mutator: (state: PatientState) => void) => {
+  mutator(engine.getState());
+  notify();
+};
+
 export const subscribe = (listener: () => void) => {
   subscribers.add(listener);
   return () => {

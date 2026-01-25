@@ -45,7 +45,14 @@ const emitPanelOpen = (title: string, id: string) => {
   window.dispatchEvent(new CustomEvent(PANEL_EVENT, { detail: { open: true, title, id } }));
 };
 
-export type HotspotEntry = {
+export type HotspotRegistryEntry = {
+  meshName: string;
+  label: string;
+  category?: string;
+  onClick?: () => void;
+};
+
+export type HotspotMeshEntry = {
   prefix: string;
   id: string;
   label: string;
@@ -54,15 +61,20 @@ export type HotspotEntry = {
   pickMesh: AbstractMesh;
   sourceName: string;
   radius: number;
+  category?: string;
+  onClick?: () => void;
 };
+
+export type HotspotEntry = HotspotRegistryEntry | HotspotMeshEntry;
 
 type HotspotSystemOptions = {
   scene: Scene;
   camera: Camera;
   uiRef: { current: AdvancedDynamicTexture | null };
   highlightLayerRef: { current: HighlightLayer | null };
-  selectedRef: { current: HotspotEntry | null };
+  selectedRef: { current: HotspotMeshEntry | null };
   onDeselect?: () => void;
+  entries?: HotspotEntry[];
 };
 
 type HudElements = {
@@ -75,7 +87,7 @@ type HudElements = {
 };
 
 const INTERACTIVE_NAME_REGEX =
-  /^(HS__|HOTSPOT__|HP__|NAV__|CAM__|SOCKET__|hs__|hotspot__|hp__|nav__|cam__|socket__)/i;
+  /^(HS__|HOTSPOT__|HP__|NAV__|CAM__|SOCKET__|HS_|INT_|DX_|STEP_|CTL_|ROLE_|hs__|hotspot__|hp__|nav__|cam__|socket__|hs_|int_|dx_|step_|ctl_|role_)/i;
 const DEFAULT_RADIUS = 0.12;
 const PANEL_WIDTH = 200;
 const PANEL_HEIGHT = 140;
@@ -106,10 +118,19 @@ const normalizePrefix = (prefix?: string | null) => {
     return "HS__";
   }
   const upper = prefix.toUpperCase();
-  return upper.endsWith("__") ? upper : `${upper}__`;
+  if (upper.endsWith("__") || upper.endsWith("_")) {
+    return upper;
+  }
+  return `${upper}__`;
 };
 
 const parseName = (name: string) => {
+  const underscoreMatch = name.match(/^(HS|INT|DX|STEP|CTL|ROLE)_(.+)/i);
+  if (underscoreMatch) {
+    const prefix = `${underscoreMatch[1].toUpperCase()}_`;
+    const id = underscoreMatch[2] || name;
+    return { prefix, id, label: id };
+  }
   const parts = name.split("__");
   if (parts.length >= 2) {
     const prefix = normalizePrefix(`${parts[0]}__`);
@@ -193,10 +214,16 @@ const resolveHighlightMesh = (mesh: AbstractMesh): Mesh | null => {
   return null;
 };
 
-const shouldTreatAsInteractive = (node: TransformNode | AbstractMesh) => {
+const shouldTreatAsInteractive = (
+  node: TransformNode | AbstractMesh,
+  registryByName?: Map<string, HotspotRegistryEntry>
+) => {
   const metadata = (node as { metadata?: Record<string, unknown> | null }).metadata;
   if (metadata?.__debugOnly === true) {
     return false;
+  }
+  if (registryByName?.has(node.name)) {
+    return true;
   }
   return Boolean(INTERACTIVE_NAME_REGEX.test(node.name) || metadata?.hotspot || metadata?.hotspotId);
 };
@@ -204,10 +231,11 @@ const shouldTreatAsInteractive = (node: TransformNode | AbstractMesh) => {
 const buildHotspots = (
   scene: Scene,
   colliders: AbstractMesh[],
-  hotspotMap: Map<number, HotspotEntry>
-): HotspotEntry[] => {
+  hotspotMap: Map<number, HotspotMeshEntry>,
+  registryByName?: Map<string, HotspotRegistryEntry>
+): HotspotMeshEntry[] => {
   hotspotMap.clear();
-  const entries: HotspotEntry[] = [];
+  const entries: HotspotMeshEntry[] = [];
 
   const nodes: Array<TransformNode | AbstractMesh> = [
     ...scene.transformNodes,
@@ -215,12 +243,14 @@ const buildHotspots = (
   ];
 
   nodes.forEach((node) => {
-    if (!shouldTreatAsInteractive(node)) {
+    if (!shouldTreatAsInteractive(node, registryByName)) {
       return;
     }
 
     const meta = getMetadata(node);
     const radius = Number.isFinite(meta.radius) ? (meta.radius as number) : DEFAULT_RADIUS;
+    const registryEntry = registryByName?.get(node.name);
+    const entryLabel = registryEntry?.label ?? meta.label;
 
     let pickMesh: AbstractMesh;
     if (node instanceof AbstractMesh && isRenderableMesh(node)) {
@@ -231,15 +261,17 @@ const buildHotspots = (
       colliders.push(pickMesh);
     }
 
-    const entry: HotspotEntry = {
+    const entry: HotspotMeshEntry = {
       prefix: meta.prefix,
       id: meta.id,
-      label: meta.label,
+      label: entryLabel,
       type: meta.type ?? "hotspot",
       node,
       pickMesh,
       sourceName: node.name,
-      radius
+      radius,
+      category: registryEntry?.category,
+      onClick: registryEntry?.onClick
     };
 
     hotspotMap.set(pickMesh.uniqueId, entry);
@@ -402,14 +434,21 @@ export function attachHotspotSystem({
   uiRef,
   highlightLayerRef,
   selectedRef,
-  onDeselect
+  onDeselect,
+  entries
 }: HotspotSystemOptions): { refresh: () => void; dispose: () => void } {
   const createdColliders: AbstractMesh[] = [];
   const testNodes: TransformNode[] = [];
-  const hotspotMap = new Map<number, HotspotEntry>();
+  const hotspotMap = new Map<number, HotspotMeshEntry>();
+  const registryByName = new Map<string, HotspotRegistryEntry>();
+  (entries ?? []).forEach((entry) => {
+    if ("meshName" in entry) {
+      registryByName.set(entry.meshName, entry);
+    }
+  });
   const hud = ensureHud(scene, uiRef);
   const highlightLayer = ensureHighlightLayer(scene, highlightLayerRef);
-  let hotspots: HotspotEntry[] = [];
+  let hotspots: HotspotMeshEntry[] = [];
   let latestVitals: PatientState | null = getEngineState();
   const unsubscribeVitals = subscribe(() => {
     latestVitals = getEngineState();
@@ -441,7 +480,7 @@ export function attachHotspotSystem({
     pingBaseScale = null;
   };
 
-  const selectHotspot = (entry: HotspotEntry, pickedMesh?: AbstractMesh | null) => {
+  const selectHotspot = (entry: HotspotMeshEntry, pickedMesh?: AbstractMesh | null) => {
     if (selectedRef.current?.id === entry.id) {
       return;
     }
@@ -493,7 +532,7 @@ export function attachHotspotSystem({
     if (hotspotMap.has(mesh.uniqueId)) {
       return true;
     }
-    if (shouldTreatAsInteractive(mesh)) {
+    if (shouldTreatAsInteractive(mesh, registryByName)) {
       return true;
     }
     if (mesh.parent && hotspotMap.has(mesh.parent.uniqueId)) {
@@ -591,10 +630,10 @@ export function attachHotspotSystem({
     createdColliders.splice(0).forEach((collider) => collider.dispose(false, true));
     testNodes.splice(0).forEach((node) => node.dispose(false, true));
 
-    hotspots = buildHotspots(scene, createdColliders, hotspotMap);
+    hotspots = buildHotspots(scene, createdColliders, hotspotMap, registryByName);
     if (hotspots.length === 0) {
       testNodes.push(...createTestHotspots(scene, camera));
-      hotspots = buildHotspots(scene, createdColliders, hotspotMap);
+      hotspots = buildHotspots(scene, createdColliders, hotspotMap, registryByName);
     }
 
     hotspots.forEach((entry) => {
@@ -638,6 +677,7 @@ export function attachHotspotSystem({
     if (pickInfo?.hit && pickedMesh && isHotspotMesh(pickedMesh)) {
       const entry = resolveHotspotFromMesh(pickedMesh);
       if (entry) {
+        entry.onClick?.();
         selectHotspot(entry, pickedMesh);
         emitPick({
           prefix: entry.prefix ?? "HS__",

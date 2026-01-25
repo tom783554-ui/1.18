@@ -33,4 +33,8 @@ export interface PatientState {
 
   alerts: Alert[];
   objectives: Objective[];
+
+  dx: string | null;
+  steps: string[];
+  roleFocus: string | null;
 }
