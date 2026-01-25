@@ -86,6 +86,11 @@ type HudElements = {
   debug: TextBlock;
 };
 
+type HotspotLabelElements = {
+  container: Rectangle;
+  text: TextBlock;
+};
+
 const INTERACTIVE_NAME_REGEX =
   /^(HS__|HOTSPOT__|HP__|NAV__|CAM__|SOCKET__|HS_|INT_|DX_|STEP_|CTL_|ROLE_|hs__|hotspot__|hp__|nav__|cam__|socket__|hs_|int_|dx_|step_|ctl_|role_)/i;
 const DEFAULT_RADIUS = 0.12;
@@ -94,6 +99,10 @@ const PANEL_HEIGHT = 140;
 const PANEL_PADDING = 12;
 const PANEL_OFFSET = 14;
 const MONITOR_PANEL_SIZE = 170;
+const LABEL_OFFSET_Y = -34;
+const LABEL_FONT_SIZE = 12;
+const LABEL_HEIGHT = 22;
+const LABEL_MIN_WIDTH = 74;
 
 const getNodePosition = (node: TransformNode | AbstractMesh) => {
   if (typeof node.getAbsolutePosition === "function") {
@@ -287,9 +296,6 @@ const buildHotspots = (
 };
 
 const createTestHotspots = (scene: Scene, camera: Camera): TransformNode[] => {
-  if (process.env.NODE_ENV === "production") {
-    return [];
-  }
   const forward = camera.getDirection(Vector3.Forward()).normalize();
   const base = camera.position.add(forward.scale(2.4));
   const testHotspots = [
@@ -429,6 +435,40 @@ const ensureHud = (scene: Scene, ref: { current: AdvancedDynamicTexture | null }
   return { marker, line, panel, title, details, debug };
 };
 
+const createHotspotLabel = (
+  ui: AdvancedDynamicTexture,
+  entry: HotspotMeshEntry
+): HotspotLabelElements => {
+  const container = new Rectangle(`hotspot-label__${entry.id}`);
+  container.heightInPixels = LABEL_HEIGHT;
+  container.cornerRadius = 8;
+  container.thickness = 1;
+  container.color = "rgba(148,163,184,0.45)";
+  container.background = "rgba(15, 23, 42, 0.82)";
+  container.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT;
+  container.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP;
+  container.linkWithMesh(entry.pickMesh);
+  container.linkOffsetY = LABEL_OFFSET_Y;
+  container.isPointerBlocker = false;
+
+  const text = new TextBlock(`hotspot-label-text__${entry.id}`);
+  text.color = "#f8fafc";
+  text.fontSize = LABEL_FONT_SIZE;
+  text.text = entry.label || entry.id;
+  text.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+  text.textVerticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+  text.paddingLeftInPixels = 8;
+  text.paddingRightInPixels = 8;
+  container.addControl(text);
+
+  const labelWidth = Math.max(LABEL_MIN_WIDTH, Math.round((text.text?.length ?? 0) * 8 + 24));
+  container.widthInPixels = labelWidth;
+
+  ui.addControl(container);
+
+  return { container, text };
+};
+
 export function attachHotspotSystem({
   scene,
   camera,
@@ -450,6 +490,7 @@ export function attachHotspotSystem({
   const hud = ensureHud(scene, uiRef);
   const highlightLayer = ensureHighlightLayer(scene, highlightLayerRef);
   let hotspots: HotspotMeshEntry[] = [];
+  let hotspotLabels: HotspotLabelElements[] = [];
   let latestVitals: PatientState | null = getEngineState();
   const unsubscribeVitals = subscribe(() => {
     latestVitals = getEngineState();
@@ -630,6 +671,9 @@ export function attachHotspotSystem({
     deselect();
     createdColliders.splice(0).forEach((collider) => collider.dispose(false, true));
     testNodes.splice(0).forEach((node) => node.dispose(false, true));
+    hotspotLabels.splice(0).forEach((label) => {
+      label.container.dispose();
+    });
 
     hotspots = buildHotspots(scene, createdColliders, hotspotMap, registryByName);
     if (hotspots.length === 0) {
@@ -642,6 +686,10 @@ export function attachHotspotSystem({
         entry.pickMesh.isPickable = true;
       }
     });
+
+    if (uiRef.current) {
+      hotspotLabels = hotspots.map((entry) => createHotspotLabel(uiRef.current as AdvancedDynamicTexture, entry));
+    }
 
     // Emit hotspot registry (for JSON export + debugging)
     try {
@@ -725,6 +773,7 @@ export function attachHotspotSystem({
       clearHotspotProjection();
       createdColliders.splice(0).forEach((collider) => collider.dispose(false, true));
       testNodes.splice(0).forEach((node) => node.dispose(false, true));
+      hotspotLabels.splice(0).forEach((label) => label.container.dispose());
       highlightLayer.dispose();
       uiRef.current?.dispose();
       uiRef.current = null;
